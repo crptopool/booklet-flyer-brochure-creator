@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PrintPrep — Booklet, Flyer &amp; Brochure Creator</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+
+  <body>
+    <header>
+      <h1>PrintPrep</h1>
+      <p class="subtitle">Booklet, flyer &amp; brochure print preparation</p>
+    </header>
+
+    <nav id="tabs">
+      <button class="tab active" data-tab="pdf">Import PDF</button>
+      <button class="tab" data-tab="booklet">Booklet</button>
+      <button class="tab" data-tab="nup">N-Up / Step &amp; Repeat</button>
+      <button class="tab" data-tab="binding">Binding &amp; Spine</button>
+    </nav>
+
+    <main>
+      <!-- Screen: PDF import / pages -->
+      <section id="panel-pdf" class="panel active">
+        <h2>Import PDF</h2>
+        <p class="hint">
+          The original file is never modified. Page operations are stored as
+          project instructions and only applied when exporting a new PDF.
+        </p>
+        <div class="row">
+          <button id="btn-open-pdf">Open PDF…</button>
+          <span id="pdf-name" class="filename"></span>
+        </div>
+        <div id="pdf-info" class="card hidden"></div>
+        <div id="pdf-pages" class="page-grid"></div>
+        <div id="pdf-actions" class="row hidden">
+          <button id="btn-insert-blank">Insert blank at end</button>
+          <button id="btn-export-pdf">Export PDF…</button>
+        </div>
+        <div id="pdf-preflight" class="card hidden"></div>
+      </section>
+
+      <!-- Screen: Booklet -->
+      <section id="panel-booklet" class="panel">
+        <h2>Saddle-Stitch Booklet</h2>
+        <div class="form-grid">
+          <label>Page count
+            <input type="number" id="bk-pages" value="20" min="1" />
+          </label>
+          <label>Final trim size
+            <select id="bk-trim"></select>
+          </label>
+          <label>Printer sheet size
+            <select id="bk-sheet"></select>
+          </label>
+        </div>
+        <button id="btn-booklet">Calculate booklet plan</button>
+        <div id="booklet-result" class="card hidden"></div>
+        <div id="booklet-spreads" class="spread-grid"></div>
+      </section>
+
+      <!-- Screen: N-Up -->
+      <section id="panel-nup" class="panel">
+        <h2>N-Up &amp; Step-and-Repeat</h2>
+        <div class="form-grid">
+          <label>Mode
+            <select id="nup-mode">
+              <option value="sequential">Sequential N-up</option>
+              <option value="repeat">Step-and-repeat</option>
+              <option value="cutstack">Cut-and-stack</option>
+            </select>
+          </label>
+          <label>Pages / copies
+            <input type="number" id="nup-pages" value="100" min="1" />
+          </label>
+          <label>Rows
+            <input type="number" id="nup-rows" value="2" min="1" />
+          </label>
+          <label>Columns
+            <input type="number" id="nup-cols" value="2" min="1" />
+          </label>
+          <label>Duplex
+            <select id="nup-duplex">
+              <option value="false">Single-sided</option>
+              <option value="true">Double-sided</option>
+            </select>
+          </label>
+        </div>
+        <button id="btn-nup">Calculate imposition</button>
+        <div id="nup-result" class="card hidden"></div>
+        <div id="nup-sheets" class="spread-grid"></div>
+      </section>
+
+      <!-- Screen: Binding & spine -->
+      <section id="panel-binding" class="panel">
+        <h2>Binding &amp; Spine Calculator</h2>
+        <div class="form-grid">
+          <label>Binding type
+            <select id="bind-type">
+              <option value="saddle_stitch">Saddle stitch</option>
+              <option value="staple">Staple</option>
+              <option value="perfect">Perfect bind</option>
+              <option value="spiral">Spiral</option>
+              <option value="wire_o">Wire-O</option>
+              <option value="comb">Comb</option>
+              <option value="ring">Ring</option>
+              <option value="hardcover">Hardcover</option>
+            </select>
+          </label>
+          <label>Page count
+            <input type="number" id="bind-pages" value="200" min="1" />
+          </label>
+          <label>Paper weight (GSM)
+            <input type="number" id="bind-gsm" value="80" min="1" />
+          </label>
+        </div>
+        <button id="btn-binding">Calculate</button>
+        <div id="binding-result" class="card hidden"></div>
+      </section>
+    </main>
+  </body>
+</html>
