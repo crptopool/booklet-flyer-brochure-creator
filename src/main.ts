@@ -74,6 +74,15 @@ function el<T extends HTMLElement>(id: string): T {
 const PT_PER_MM = 72 / 25.4;
 const ptToMm = (pt: number) => pt / PT_PER_MM;
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 // ---------------------------------------------------------------------------
 // PDF import panel (Phase 1 — non-destructive)
 // ---------------------------------------------------------------------------
@@ -86,8 +95,7 @@ async function refreshPages() {
   const pages = await invoke<VirtualPage[]>("preview_operations", {
     source,
     operations,
-  });
-  const grid = el<HTMLDivElement>("pdf-pages");
+  });  const grid = el<HTMLDivElement>("pdf-pages");
   grid.innerHTML = "";
   pages.forEach((vp, i) => {
     const div = document.createElement("div");
@@ -112,13 +120,31 @@ async function refreshPages() {
       refreshPages().catch(showError);
     });
   });
-  await refreshPreflight(pages.length);
+  await refreshPreflight(pages);
 }
 
-async function refreshPreflight(pageCount: number) {
+async function refreshPreflight(pages: VirtualPage[]) {
   if (!source) return;
+  // Preflight the *working* document state: map each virtual page back to
+  // its source page info so counts, sizes and rotations reflect the
+  // pending operations rather than the original file.
+  const fallback = source.pages[0];
+  const workingPages: PageInfo[] = pages.map((vp, i) => {
+    const orig = vp.source_page !== null ? source!.pages[vp.source_page - 1] : undefined;
+    return {
+      number: i + 1,
+      width_pt: vp.width_pt ?? orig?.width_pt ?? fallback.width_pt,
+      height_pt: vp.height_pt ?? orig?.height_pt ?? fallback.height_pt,
+      rotation: ((orig?.rotation ?? 0) + vp.rotation) % 360,
+    };
+  });
+  const workingSource: PdfSource = {
+    ...source,
+    page_count: workingPages.length,
+    pages: workingPages,
+  };
   const findings = await invoke<Finding[]>("run_preflight", {
-    source: { ...source },
+    source: workingSource,
     binding: "saddle_stitch",
     bleedMm: 3.0,
     expectedTrimMm: null,
@@ -126,9 +152,12 @@ async function refreshPreflight(pageCount: number) {
   const box = el<HTMLDivElement>("pdf-preflight");
   box.classList.remove("hidden");
   const rows = findings
-    .map((f) => `<li class="sev-${f.severity.toLowerCase()}"><strong>${f.severity}</strong> ${f.message}</li>`)
+    .map(
+      (f) =>
+        `<li class="sev-${escapeHtml(f.severity.toLowerCase())}"><strong>${escapeHtml(f.severity)}</strong> ${escapeHtml(f.message)}</li>`
+    )
     .join("");
-  box.innerHTML = `<h3>Preflight (saddle-stitch intent, ${pageCount} pages)</h3>` +
+  box.innerHTML = `<h3>Preflight (saddle-stitch intent, ${workingPages.length} pages)</h3>` +
     (rows ? `<ul>${rows}</ul>` : "<p>No issues found.</p>");
 }
 
