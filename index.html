@@ -44,7 +44,18 @@
 
       <!-- Screen: Booklet -->
       <section id="panel-booklet" class="panel">
-        <h2>Saddle-Stitch Booklet</h2>
+        <h2>Booklet Binding Methods</h2>
+        <p class="hint">
+          Choose how the finished booklet is held together. Each method changes
+          the page-count rule, the gutter you must leave and how the sheets are
+          printed — the diagrams below update as you change the settings so you
+          can see what you are asking for and how it will look after printing.
+        </p>
+
+        <div id="binding-methods" class="method-grid"></div>
+        <div id="binding-detail" class="card"></div>
+
+        <h3>Document &amp; paper</h3>
         <div class="form-grid">
           <label>Page count
             <input type="number" id="bk-pages" value="20" min="1" />
@@ -55,7 +66,49 @@
           <label>Printer sheet size
             <select id="bk-sheet"></select>
           </label>
+          <label>Sheet orientation
+            <select id="bk-orientation">
+              <option value="landscape">Landscape</option>
+              <option value="portrait">Portrait</option>
+            </select>
+          </label>
+          <label>Paper weight (GSM)
+            <input type="number" id="bk-gsm" value="80" min="1" />
+          </label>
         </div>
+
+        <h3>Printing configuration</h3>
+        <div class="form-grid">
+          <label>Pages per sheet side
+            <select id="bk-per-side">
+              <option value="1">1 page per side</option>
+              <option value="2" selected>2 pages per side</option>
+              <option value="4">4 pages per side</option>
+            </select>
+          </label>
+          <label>Sides
+            <select id="bk-sides">
+              <option value="double" selected>Double-sided (duplex)</option>
+              <option value="single">Single-sided</option>
+            </select>
+          </label>
+          <label>Duplex flip edge
+            <select id="bk-flip">
+              <option value="long_edge">Flip on long edge</option>
+              <option value="short_edge" selected>Flip on short edge</option>
+              <option value="manual">Manual duplex</option>
+            </select>
+          </label>
+          <label>Binding edge
+            <select id="bk-side"></select>
+          </label>
+          <label>Binding margin (mm)
+            <input type="number" id="bk-margin" value="5" min="0" step="0.5" />
+          </label>
+        </div>
+
+        <div id="config-diagrams" class="diagram-grid"></div>
+
         <button id="btn-booklet">Calculate booklet plan</button>
         <div id="booklet-result" class="card hidden"></div>
         <div id="booklet-spreads" class="spread-grid"></div>

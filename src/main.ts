@@ -1,5 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import {
+  bindingDiagram,
+  duplexFlipDiagram,
+  gutterDiagram,
+  pagesPerSheetDiagram,
+  resultDiagram,
+} from "./diagrams";
 
 // ---------------------------------------------------------------------------
 // Types mirroring the Rust backend
@@ -52,6 +59,61 @@ interface VirtualPage {
   rotation: number;
   width_pt: number | null;
   height_pt: number | null;
+}
+
+type PageCountRule = "multiple_of_four" | "multiple_of_two" | "any";
+
+interface BindingProfile {
+  binding: string;
+  key: string;
+  name: string;
+  description: string;
+  mechanism: string;
+  page_count_rule: PageCountRule;
+  folded: boolean;
+  folds_per_sheet: number;
+  creep_applies: boolean;
+  has_spine: boolean;
+  punched: boolean;
+  recommended_binding_margin_mm: number;
+  allowed_sides: string[];
+  min_pages: number;
+  max_pages: number;
+  requires_duplex: boolean;
+  separate_cover: boolean;
+  guidance: string;
+  typical_use: string;
+}
+
+interface DuplexPlan {
+  mode: string;
+  flip_axis: string;
+  back_side_rotation: number;
+  back_side_inverted: boolean;
+  is_recommended: boolean;
+  explanation: string;
+  manual_steps: string[];
+}
+
+interface PlanNote {
+  severity: string;
+  message: string;
+}
+
+interface BookletPlan {
+  profile: BindingProfile;
+  duplex: DuplexPlan;
+  pages_per_side: number;
+  pages_per_sheet: number;
+  source_pages: number;
+  blanks_needed: number;
+  total_pages: number;
+  sheet_count: number;
+  folds_per_sheet: number;
+  uses_printer_spreads: boolean;
+  spine_width_mm: number | null;
+  caliper_mm: number;
+  notes: PlanNote[];
 }
 
 // ---------------------------------------------------------------------------
@@ -228,32 +290,232 @@ async function populatePaperSizes() {
   el<HTMLSelectElement>("bk-sheet").value = "A4";
 }
 
+// --- Binding method selection ---------------------------------------------
+
+let bindingProfiles: BindingProfile[] = [];
+let selectedBinding = "saddle_stitch";
+/** Set once the user edits the margin, so we stop overwriting their value. */
+let marginOverridden = false;
+
+const SIDE_LABELS: Record<string, string> = {
+  left: "Left edge",
+  right: "Right edge",
+  top: "Top edge",
+};
+
+function currentProfile(): BindingProfile | undefined {
+  return bindingProfiles.find((p) => p.key === selectedBinding);
+}
+
+function isDuplex(): boolean {
+  return el<HTMLSelectElement>("bk-sides").value === "double";
+}
+
+function isLandscape(): boolean {
+  return el<HTMLSelectElement>("bk-orientation").value === "landscape";
+}
+
+function duplexMode(): string {
+  return isDuplex() ? el<HTMLSelectElement>("bk-flip").value : "simplex";
+}
+
+async function renderBindingMethods() {
+  bindingProfiles = await invoke<BindingProfile[]>("list_booklet_bindings");
+  const grid = el<HTMLDivElement>("binding-methods");
+  grid.innerHTML = bindingProfiles
+    .map(
+      (p) => `
+      <button type="button" class="method-card${p.key === selectedBinding ? " selected" : ""}"
+              data-binding="${escapeHtml(p.key)}">
+        <div class="method-art">${bindingDiagram(p.key)}</div>
+        <div class="method-name">${escapeHtml(p.name)}</div>
+        <div class="method-mech">${escapeHtml(p.mechanism)}</div>
+      </button>`
+    )
+    .join("");
+  grid.querySelectorAll<HTMLButtonElement>(".method-card").forEach((card) => {
+    card.addEventListener("click", () => {
+      selectedBinding = card.dataset.binding!;
+      marginOverridden = false;
+      renderBindingMethods().catch(showError);
+    });
+  });
+  await applyBindingDefaults();
+}
+
+/** Push the selected method's rules into the form and describe it. */
+async function applyBindingDefaults() {
+  const p = currentProfile();
+  if (!p) return;
+
+  // Binding edge options are method-specific.
+  const sideSelect = el<HTMLSelectElement>("bk-side");
+  const previous = sideSelect.value;
+  sideSelect.innerHTML = p.allowed_sides
+    .map((s) => `<option value="${s}">${SIDE_LABELS[s] ?? s}</option>`)
+    .join("");
+  sideSelect.value = p.allowed_sides.includes(previous as never) ? previous : p.allowed_sides[0];
+
+  if (!marginOverridden) {
+    el<HTMLInputElement>("bk-margin").value = p.recommended_binding_margin_mm.toFixed(1);
+  }
+
+  // Folded bindings must be duplex; punched ones may be single-sided.
+  const sides = el<HTMLSelectElement>("bk-sides");
+  if (p.requires_duplex && sides.value === "single") sides.value = "double";
+
+  const perSide = el<HTMLSelectElement>("bk-per-side");
+  if (p.folded && perSide.value === "1") perSide.value = "2";
+  if (!p.folded && perSide.value !== "1") perSide.value = "1";
+
+  const ruleText =
+    p.page_count_rule === "multiple_of_four"
+      ? "must be a multiple of 4"
+      : p.page_count_rule === "multiple_of_two"
+        ? "must be a multiple of 2"
+        : "any page count works";
+
+  el<HTMLDivElement>("binding-detail").innerHTML = `
+    <h3 style="margin-top:0">${escapeHtml(p.name)}</h3>
+    <p>${escapeHtml(p.description)}</p>
+    <ul class="spec-list">
+      <li><strong>Page count</strong> ${escapeHtml(ruleText)}</li>
+      <li><strong>Practical range</strong> ${p.min_pages}–${p.max_pages === 4294967295 ? "any" : p.max_pages} pages</li>
+      <li><strong>Recommended gutter</strong> ${p.recommended_binding_margin_mm.toFixed(1)} mm</li>
+      <li><strong>Printing</strong> ${p.requires_duplex ? "double-sided required" : "single- or double-sided"}</li>
+      <li><strong>Spine</strong> ${p.has_spine ? "yes — width must be calculated" : "none"}</li>
+      <li><strong>Opens flat</strong> ${p.punched ? "yes" : "no"}</li>
+    </ul>
+    <p class="hint"><strong>Why this matters:</strong> ${escapeHtml(p.guidance)}</p>
+    <p class="hint"><strong>Typically used for:</strong> ${escapeHtml(p.typical_use)}</p>`;
+
+  await renderConfigDiagrams();
+}
+
+/** Live sample images for the current configuration. */
+async function renderConfigDiagrams() {
+  const p = currentProfile();
+  if (!p) return;
+
+  const perSide = Number(el<HTMLSelectElement>("bk-per-side").value);
+  const landscape = isLandscape();
+  const mode = duplexMode();
+  const margin = Number(el<HTMLInputElement>("bk-margin").value) || 0;
+  const side = el<HTMLSelectElement>("bk-side").value || "left";
+  const pages = Number(el<HTMLInputElement>("bk-pages").value) || 1;
+
+  // The flip selector only applies to duplex jobs.
+  el<HTMLSelectElement>("bk-flip").disabled = !isDuplex();
+
+  let flip = { back_side_rotation: 0, is_recommended: true, explanation: "", manual_steps: [] as string[], flip_axis: "" };
+  try {
+    flip = await invoke<DuplexPlan>("get_duplex_plan", { mode, sheetIsLandscape: landscape });
+  } catch {
+    /* diagrams still render with the defaults above */
+  }
+
+  const folds = p.folded && isDuplex() ? (perSide === 4 ? 2 : perSide === 2 ? 1 : 0) : 0;
+  const perSheet = perSide * (isDuplex() ? 2 : 1);
+  const sheets = Math.ceil(pages / Math.max(1, perSheet));
+
+  const card = (title: string, art: string, caption: string) => `
+    <figure class="diagram">
+      <figcaption class="diagram-title">${escapeHtml(title)}</figcaption>
+      ${art}
+      <p class="diagram-caption">${escapeHtml(caption)}</p>
+    </figure>`;
+
+  el<HTMLDivElement>("config-diagrams").innerHTML =
+    card(
+      `${perSide} page${perSide > 1 ? "s" : ""} per sheet side`,
+      pagesPerSheetDiagram(perSide, folds, landscape),
+      `Each sheet carries ${perSheet} page${perSheet > 1 ? "s" : ""} in total${isDuplex() ? " across both sides" : " on one side"}.`
+    ) +
+    card(
+      isDuplex() ? "Duplex flip result" : "Single-sided printing",
+      duplexFlipDiagram(mode, landscape, flip.back_side_rotation, flip.is_recommended),
+      flip.explanation || "Only the front of each sheet is printed."
+    ) +
+    card(
+      p.punched ? "Punch-safe zone" : "Binding gutter",
+      gutterDiagram(margin, p.punched, side, p.key === "wire_o" ? "rect" : "round"),
+      p.punched
+        ? "Content inside this strip will be cut away by the punch."
+        : "Content inside this strip is swallowed by the binding when the book is closed."
+    ) +
+    card(
+      "After printing and binding",
+      resultDiagram(p.key, sheets, pages),
+      `${sheets} sheet${sheets === 1 ? "" : "s"} of paper produce the finished ${p.name.toLowerCase()} document.`
+    ) +
+    (flip.manual_steps.length
+      ? `<div class="diagram manual-steps">
+           <div class="diagram-title">Manual duplex — reinsertion steps</div>
+           <ol>${flip.manual_steps.map((s) => `<li>${escapeHtml(s)}</li>`).join("")}</ol>
+         </div>`
+      : "");
+}
+
+// Any configuration change refreshes the sample images immediately.
+for (const id of ["bk-per-side", "bk-sides", "bk-flip", "bk-orientation", "bk-side", "bk-pages"]) {
+  el<HTMLElement>(id).addEventListener("change", () => {
+    renderConfigDiagrams().catch(showError);
+  });
+}
+el<HTMLInputElement>("bk-margin").addEventListener("input", () => {
+  marginOverridden = true;
+  renderConfigDiagrams().catch(showError);
+});
+el<HTMLSelectElement>("bk-sides").addEventListener("change", () => {
+  applyBindingDefaults().catch(showError);
+});
+
 el<HTMLButtonElement>("btn-booklet").addEventListener("click", async () => {
   try {
     const pages = Number(el<HTMLInputElement>("bk-pages").value);
-    const blanks = await invoke<number>("booklet_blanks_needed", { pageCount: pages });
-    const sheets = await invoke<number>("booklet_sheet_count", { pageCount: pages });
-    const spreads = await invoke<SheetSpread[]>("booklet_order", { pageCount: pages });
+    const plan = await invoke<BookletPlan>("build_booklet_plan", {
+      binding: selectedBinding,
+      sourcePages: pages,
+      pagesPerSide: Number(el<HTMLSelectElement>("bk-per-side").value),
+      duplexMode: duplexMode(),
+      sheetIsLandscape: isLandscape(),
+      gsm: Number(el<HTMLInputElement>("bk-gsm").value),
+    });
 
     const result = el<HTMLDivElement>("booklet-result");
     result.classList.remove("hidden");
-    result.innerHTML =
-      `<p><strong>${sheets}</strong> physical sheets (duplex), 2 booklet pages per side.</p>` +
-      (blanks > 0
-        ? `<p class="sev-warning">⚠ ${pages} pages is not divisible by 4 — ${blanks} blank page(s) will be needed. You choose where they go; pages are never added silently.</p>`
-        : `<p class="sev-info">✓ Page count is divisible by 4 — no blanks needed.</p>`);
+    result.innerHTML = `
+      <h3 style="margin-top:0">${escapeHtml(plan.profile.name)} — production plan</h3>
+      <ul class="spec-list">
+        <li><strong>Sheets of paper</strong> ${plan.sheet_count}</li>
+        <li><strong>Pages per sheet</strong> ${plan.pages_per_sheet} (${plan.pages_per_side} per side${plan.pages_per_sheet > plan.pages_per_side ? ", both sides" : ", one side"})</li>
+        <li><strong>Total pages</strong> ${plan.total_pages}${plan.blanks_needed ? ` (${plan.source_pages} supplied + ${plan.blanks_needed} blank)` : ""}</li>
+        <li><strong>Folds per sheet</strong> ${plan.folds_per_sheet}</li>
+        <li><strong>Duplex</strong> ${escapeHtml(plan.duplex.flip_axis)}${plan.duplex.back_side_inverted ? " — back sides rotated 180°" : ""}</li>
+        ${plan.spine_width_mm !== null ? `<li><strong>Spine width</strong> ${plan.spine_width_mm.toFixed(2)} mm at ${plan.caliper_mm.toFixed(3)} mm caliper</li>` : ""}
+      </ul>
+      <ul class="findings">${plan.notes
+        .map((n) => `<li class="sev-${escapeHtml(n.severity.toLowerCase())}"><strong>${escapeHtml(n.severity)}</strong> ${escapeHtml(n.message)}</li>`)
+        .join("")}</ul>`;
 
+    const spreads = await invoke<SheetSpread[]>("booklet_plan_spreads", { plan });
     const grid = el<HTMLDivElement>("booklet-spreads");
-    grid.innerHTML = spreads
-      .map(
-        (s) => `
+    grid.innerHTML = spreads.length
+      ? spreads
+          .map(
+            (s) => `
       <div class="spread">
         <div class="spread-title">Sheet ${s.sheet_number}</div>
         <div class="spread-side"><span>Front</span> ${fmt(s.front[0])} | ${fmt(s.front[1])}</div>
         <div class="spread-side"><span>Back</span> ${fmt(s.back[0])} | ${fmt(s.back[1])}</div>
       </div>`
-      )
-      .join("");
+          )
+          .join("")
+      : `<p class="hint">Printer spreads are shown for the classic single-fold saddle-stitch layout
+         (2 pages per side, double-sided). ${escapeHtml(plan.profile.name)} with this configuration keeps
+         pages in normal reading order instead.</p>`;
+
+    await renderConfigDiagrams();
   } catch (e) {
     showError(e);
   }
@@ -356,4 +618,8 @@ el<HTMLButtonElement>("btn-binding").addEventListener("click", async () => {
 
 populatePaperSizes().catch(() => {
   /* outside Tauri (plain browser) the invoke calls are unavailable */
+});
+
+renderBindingMethods().catch(() => {
+  /* same — the panel stays empty when opened outside the desktop shell */
 });

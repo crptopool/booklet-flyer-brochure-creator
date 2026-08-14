@@ -2,8 +2,21 @@
 
 **Audited against:** `AI_Agent_Print_Imposition_Booklet_Cover_Requirements.md`
 **Date:** 2026-08-14
-**Codebase:** ~3,130 lines (Rust backend + TypeScript frontend), 89 passing unit tests
+**Codebase:** Rust backend + TypeScript frontend, 119 passing unit tests
+
 **Branches audited:** `main`, `copilot/create-print-layout-application`, `copilot/ai-agent-requirements-specification`
+
+> **Update — booklet binding methods added after the original audit.**
+> The Booklet screen now offers all five binding methods (saddle stitch,
+> perfect, spiral/coil, Wire-O, case binding) with per-method settings, a
+> pages-per-sheet selector, simplex/duplex choice and long-edge/short-edge
+> flip control. This closed three gaps recorded below: **§14 duplex flip-edge
+> logic** (`print_calc/duplex.rs`, with manual-duplex reinsertion steps),
+> **§11.3/§11.4 per-binding settings**, and part of **§20 preview** — every
+> setting now renders a live SVG illustration showing what it means and how
+> the job will look after printing. The scorecard rows for those items are
+> marked inline. Everything else below still stands, including the headline
+> finding.
 
 ---
 
@@ -24,11 +37,12 @@ That single gap invalidates several MUST HAVE line items at once: booklet
 imposition, print-ready PDF, 1-up/2-up/4-up, and duplex logic all currently
 terminate in a number displayed in the UI rather than in a file a user can print.
 
-The second gap is that **§20 Preview does not exist in any form.** There is no
-reading preview, sheet preview, duplex preview, fold preview, page thumbnail, zoom
-or guide toggle. The UI presents numeric tables. §37.9 requires previews to be
-rendered from the same geometry used for export; today neither side of that
-sentence is implemented.
+The second gap is **§20 Preview**. The booklet screen now illustrates the binding,
+sheet layout, duplex flip and finished result, so the *settings* are visualised —
+but there is still no preview of the user's actual pages: no thumbnails, no sheet
+preview showing real content, no zoom or guide toggles. §37.9 requires previews to
+be rendered from the same geometry used for export, and since no imposed export
+exists yet, neither side of that sentence is fully implemented.
 
 ---
 
@@ -47,14 +61,14 @@ Legend: ✅ complete · ◐ partial (calculation exists, not delivered to user) 
 | 5 | Margins | ✅ | independent + binding-aware, `geometry.rs` |
 | 6 | 1-up / 2-up / 4-up | ◐ | sequences and cell geometry computed; no PDF output |
 | 7 | Booklet imposition | ◐ | sequencing correct and tested; no imposed PDF |
-| 8 | Duplex logic | ◐ | sheet counts + even-side padding only; no flip-edge logic |
-| 9 | Preview | ✗ | **nothing** — no thumbnails, sheet, duplex or fold preview |
+| 8 | Duplex logic | ✅ | flip long/short edge, back-side rotation, manual-duplex steps — `duplex.rs` |
+| 9 | Preview | ◐ | live SVG illustrations for binding, sheet layout, duplex flip and bound result; still no page thumbnails or per-sheet content preview |
 | 10 | Blank-page handling | ✅ | never silent; two placement strategies |
 | 11 | Print-ready PDF | ✗ | no trim/bleed boxes, no marks, no imposition |
 | 12 | DPI validation | ◐ | engine correct, but no image is ever extracted from a PDF to check |
 | 13 | Saddle-stitch support | ◐ | sequencing ✅, output ✗ |
 | 14 | Binding guidance | ✅ | per-binding margins, GSM→caliper guidance |
-| 15 | Deterministic sequencing | ✅ | pure Rust, 89 tests, zero model inference — §33 honoured |
+| 15 | Deterministic sequencing | ✅ | pure Rust, 119 tests, zero model inference — §33 honoured |
 
 ### SHOULD HAVE — ~40%
 
@@ -63,7 +77,7 @@ Legend: ✅ complete · ◐ partial (calculation exists, not delivered to user) 
 | Signatures | ◐ | division + balancing ✅; no per-signature PDF, no labels |
 | Creep | ✅ | None / Automatic / Custom, per-sheet offsets, limit flag |
 | Perfect binding | ◐ | spine calc ✅; cover generation ✗ |
-| Spiral / Wire-O / comb | ◐ | margins + binding side ✅; punch-zone preview ✗ |
+| Spiral / Wire-O / comb | ✅ | margins, binding side and punch-zone preview |
 | Cover creator | ✗ | Phase 7 entirely absent |
 | Spine calculation | ✅ | both spec formulas + custom pages-per-mm |
 | Step-and-repeat | ◐ | optimum-grid fitting ✅ (Scenario C passes); no PDF |
@@ -85,8 +99,8 @@ artwork bleed extension, AI cover design, cloud print integration — none prese
 | 1 | PDF Foundation | ~85% — missing thumbnails and image import |
 | 2 | Basic Print Preparation | ~40% — calcs only; no crop marks, sheet preview or true print-ready PDF |
 | 3 | N-Up Imposition | ~50% — sequences ✅, no PDF output, no spacing/rotation/scaling controls |
-| 4 | Booklet Printing | ~50% — sequencing ✅, no PDF, no preview, no fold/staple marks, no flip logic |
-| 5 | Binding Intelligence | ~70% — strongest phase; hardcover (§11.4) only has a margin value |
+| 4 | Booklet Printing | ~70% — sequencing ✅, duplex flip logic ✅, setting previews ✅; no imposed PDF, no rendered fold/staple marks |
+| 5 | Binding Intelligence | ~85% — strongest phase; five binding methods with full settings profiles. Hardcover still lacks board/hinge/turn-in geometry |
 | 6 | Signature Engine | ~50% — division ✅, export and labels ✗ |
 | 7 | Cover Designer | 0% |
 | 8 | AI Assistant | 0% |
@@ -120,16 +134,19 @@ to output, and none of the required visual overlays exist. The three §8 warning
 (background not extending into bleed, text near trim, objects in binding danger
 area) are all unimplemented — they require content analysis that does not exist.
 
-**§11.4 Hardcover** — spine, hinge, wrap, board dimensions and turn-in allowance
-are all missing; only a binding-margin constant exists.
+**§11.4 Hardcover** — case binding is now a selectable method with its own profile,
+spine-width calculation and guidance. Still missing as *editable values*: hinge,
+wrap, board dimensions and turn-in allowance.
 
 **§12–13** — crop marks, registration marks, page labels and sheet labels are
 listed as per-mode controls but none are implemented. Custom imposition (manual
 assignment of pages to sheet positions) is absent.
 
-**§14 Duplex** — flip-on-long-edge / flip-on-short-edge, printer-dependent
-orientation, manual-duplex instructions and the printer test sheet are all absent.
-Only sheet counting is done.
+**§14 Duplex** — implemented in `print_calc/duplex.rs`: flip on long edge, flip on
+short edge, simplex and manual duplex, with the required back-side rotation derived
+from the sheet orientation and manual reinsertion instructions. The flip result is
+illustrated live. Still absent: stored printer-dependent duplex behaviour (§25) and
+the printer test sheet.
 
 **§19 Cover Creator** — absent in full, both eBook and print-book covers.
 
