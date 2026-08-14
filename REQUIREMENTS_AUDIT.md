@@ -2,7 +2,7 @@
 
 **Audited against:** `AI_Agent_Print_Imposition_Booklet_Cover_Requirements.md`
 **Date:** 2026-08-14
-**Codebase:** Rust backend + TypeScript frontend, 139 passing unit tests
+**Codebase:** Rust backend + TypeScript frontend, 161 passing unit tests
 
 **Branches audited:** `main`, `copilot/create-print-layout-application`, `copilot/ai-agent-requirements-specification`
 
@@ -22,6 +22,17 @@
 > rendered), **§20 preview** (bound-document and printed-sheet simulation, both
 > built from the same imposition the exporter consumes, satisfying §37.9), and
 > the MUST HAVE rows for booklet imposition and 1-up/2-up/4-up.
+>
+> **Update 3 — the three remaining gaps are closed.** (a) `/TrimBox`,
+> `/BleedBox` and `/CropBox` are now written to every imposed sheet and to the
+> cover, so output is print-ready for a commercial printer. (b) Previews render
+> the user's **real artwork**: `pdfjs-dist` rasterises pages in the webview for
+> page thumbnails and composites them into the sheet and bound-document
+> previews — preview only, never the export path. (c) **Phase 7 Cover Creator**
+> is built: eBook, paperback, hardcover and dust-jacket layouts with spine,
+> board overhang, hinge, turn-in, flaps, safe areas and a barcode reservation,
+> exporting a guide PDF (or PNG for eBook). This also completes §11.4 hardcover
+> geometry.
 
 ---
 
@@ -36,18 +47,19 @@ has been resolved.** The imposition renderer now places source pages onto printe
 sheets and writes the file, so booklet imposition, N-up and duplex logic produce
 something a user can actually print rather than a number on screen.
 
-What remains is narrower. Of the nine export modes in §22, four exist (reading,
-imposed, booklet, N-up); signature, step-and-repeat, cover and preview PDFs do not.
-Print-ready output is close but incomplete: crop, fold and sheet marks are drawn,
-yet `/TrimBox` and `/BleedBox` are still not written to the output, so the file is
-not strictly print-ready for a commercial printer.
+What remains is narrower. Of the nine export modes in §22, five exist (reading,
+imposed, booklet, N-up and cover); signature, step-and-repeat and proofing-guide
+PDFs do not.
+Print-ready output is complete for these modes: crop, fold and sheet marks are
+drawn, and `/TrimBox`, `/BleedBox` and `/CropBox` are written so a commercial
+printer knows exactly where to trim.
 
-**§20 Preview** is now partly met and, importantly, met *correctly*: the bound-document
-and printed-sheet simulations are generated from the same `SheetSide` structures the
-exporter consumes, which is what §37.9 asks for. The remaining gap is that previews
-show page *positions and numbers*, not rendered page *content* — there are still no
-thumbnails of the user's artwork, and no zoom or guide toggles. Rendering real page
-content would need a rasteriser the project does not currently depend on.
+**§20 Preview** now shows the user's real artwork: page thumbnails on the import
+screen, and the actual pages composited into the sheet and bound-document previews.
+Crucially it is still met *correctly* — the previews are generated from the same
+`SheetSide` structures the exporter consumes, satisfying §37.9. Rasterising happens
+only in the webview for display; the export path still copies pages as vectors.
+What remains absent from §20 is zoom, pan and the individual guide toggles.
 
 ---
 
@@ -55,35 +67,35 @@ content would need a rasteriser the project does not currently depend on.
 
 Legend: ✅ complete · ◐ partial (calculation exists, not delivered to user) · ✗ absent
 
-### MUST HAVE — ~85%
+### MUST HAVE — ~93%
 
 | # | Requirement | Status | Notes |
 |---|---|---|---|
 | 1 | PDF import | ✅ | `pdf_ops/document.rs` — count, dims, orientation, mixed sizes, metadata, encryption |
 | 2 | Page management | ✅ | reorder / rotate / delete / duplicate / insert blank, all non-destructive |
 | 3 | Trim & sheet sizes | ✅ | 11 presets incl. SRA3, 12×18, 13×19 |
-| 4 | Bleed | ◐ | `bleed_box()` computes it; **never written to the PDF** as `/TrimBox` `/BleedBox` |
+| 4 | Bleed | ✅ | computed, written as `/BleedBox`, and drawn on cover templates |
 | 5 | Margins | ✅ | independent + binding-aware, `geometry.rs` |
 | 6 | 1-up / 2-up / 4-up | ✅ | sequences, geometry and imposed PDF output |
 | 7 | Booklet imposition | ✅ | printer spreads rendered to PDF; verified against the §11.1 example |
 | 8 | Duplex logic | ✅ | flip long/short edge, back-side rotation, manual-duplex steps — `duplex.rs` |
-| 9 | Preview | ◐ | bound-document and printed-sheet simulation from the exporter's own geometry; still no rendered page content or thumbnails |
+| 9 | Preview | ◐ | real page artwork in thumbnails, sheet and bound previews, from the exporter's own geometry; no zoom/pan or guide toggles yet |
 | 10 | Blank-page handling | ✅ | never silent; two placement strategies |
-| 11 | Print-ready PDF | ◐ | imposition and crop/fold/label marks ✅; `/TrimBox` and `/BleedBox` still not written |
-| 12 | DPI validation | ◐ | engine correct, but no image is ever extracted from a PDF to check |
+| 11 | Print-ready PDF | ✅ | imposition, crop/fold/label marks and trim/bleed/crop boxes |
+| 12 | DPI validation | ◐ | engine correct and applied to eBook cover artwork; PDF image XObjects still unscanned |
 | 13 | Saddle-stitch support | ✅ | sequencing, imposition, folds and staple guidance |
 | 14 | Binding guidance | ✅ | per-binding margins, GSM→caliper guidance |
-| 15 | Deterministic sequencing | ✅ | pure Rust, 139 tests, zero model inference — §33 honoured |
+| 15 | Deterministic sequencing | ✅ | pure Rust, 161 tests, zero model inference — §33 honoured |
 
-### SHOULD HAVE — ~40%
+### SHOULD HAVE — ~60%
 
 | Requirement | Status | Notes |
 |---|---|---|
 | Signatures | ◐ | division + balancing ✅; no per-signature PDF, no labels |
 | Creep | ✅ | None / Automatic / Custom, per-sheet offsets, limit flag |
-| Perfect binding | ◐ | spine calc and reading-order imposition ✅; cover generation ✗ |
+| Perfect binding | ✅ | spine calc, reading-order imposition and cover generation |
 | Spiral / Wire-O / comb | ✅ | margins, binding side and punch-zone preview |
-| Cover creator | ✗ | Phase 7 entirely absent |
+| Cover creator | ✅ | eBook, paperback, hardcover and dust jacket with full guide export |
 | Spine calculation | ✅ | both spec formulas + custom pages-per-mm |
 | Step-and-repeat | ◐ | optimum-grid fitting ✅ (Scenario C passes); no PDF |
 | Cut-and-stack | ◐ | sequence ✅; no PDF |
@@ -101,13 +113,13 @@ artwork bleed extension, AI cover design, cloud print integration — none prese
 
 | Phase | Title | Status |
 |---|---|---|
-| 1 | PDF Foundation | ~85% — missing thumbnails and image import |
-| 2 | Basic Print Preparation | ~70% — crop marks and sheet preview ✅; trim/bleed boxes still unwritten |
+| 1 | PDF Foundation | ~95% — thumbnails ✅; image import (PNG/JPEG/TIFF/SVG) still missing |
+| 2 | Basic Print Preparation | ~90% — crop marks, sheet preview and trim/bleed boxes all ✅ |
 | 3 | N-Up Imposition | ~75% — sequences and imposed PDF ✅; no spacing/scaling controls |
 | 4 | Booklet Printing | ~95% — sequencing, duplex flip, imposed PDF, fold marks and previews all ✅ |
-| 5 | Binding Intelligence | ~85% — strongest phase; five binding methods with full settings profiles. Hardcover still lacks board/hinge/turn-in geometry |
+| 5 | Binding Intelligence | ~95% — five binding methods with full settings profiles; hardcover board, hinge and turn-in geometry now on the Cover Creator |
 | 6 | Signature Engine | ~50% — division ✅, export and labels ✗ |
-| 7 | Cover Designer | 0% |
+| 7 | Cover Designer | ~90% — all four cover kinds with spine, guides and barcode area; no artwork placement yet |
 | 8 | AI Assistant | 0% |
 | 9 | Automated Preflight | ~35% |
 | 10 | Advanced Commercial | 0% |
@@ -134,14 +146,15 @@ there is no guided source → output → trim → sheet → orientation → mode
 **§7 DPI** — presets and the exact §7 warning string are implemented, but nothing
 walks a PDF's image XObjects, so per-image warnings never fire on a real document.
 
-**§8 Bleed/trim** — media/crop/trim/bleed distinctions are computed but not written
-to output, and none of the required visual overlays exist. The three §8 warnings
-(background not extending into bleed, text near trim, objects in binding danger
-area) are all unimplemented — they require content analysis that does not exist.
+**§8 Bleed/trim** — media, crop, trim and bleed boxes are computed *and written* to
+imposed sheets and cover templates, and cover templates draw the trim, bleed, fold
+and safe-area overlays. The three §8 content warnings (background not extending into
+bleed, text near trim, objects in the binding danger area) remain unimplemented —
+they need content analysis the project does not do.
 
-**§11.4 Hardcover** — case binding is now a selectable method with its own profile,
-spine-width calculation and guidance. Still missing as *editable values*: hinge,
-wrap, board dimensions and turn-in allowance.
+**§11.4 Hardcover** — complete. Board overhang, hinge groove, turn-in allowance and
+spine are all editable inputs on the Cover Creator, and each is drawn on the exported
+template.
 
 **§12–13** — crop marks, registration marks, page labels and sheet labels are
 listed as per-mode controls but none are implemented. Custom imposition (manual
@@ -153,13 +166,17 @@ from the sheet orientation and manual reinsertion instructions. The flip result 
 illustrated live. Still absent: stored printer-dependent duplex behaviour (§25) and
 the printer test sheet.
 
-**§19 Cover Creator** — absent in full, both eBook and print-book covers.
+**§19 Cover Creator** — implemented. eBook covers report aspect ratio, pixel
+adequacy and effective print DPI, and export a PNG template. Print covers compute
+spine width from the real page count and caliper, lay out back/spine/front (plus
+flaps for a dust jacket), and export a PDF with trim, bleed, fold, hinge, safe-area
+and barcode guides. Not yet supported: placing existing artwork into the template.
 
 **§21 Print Marks** — crop marks, fold marks and sheet labels are drawn on the imposed 
 output and can be toggled. Registration marks, centre marks and colour bars are absent.
 
-**§22 PDF Export Modes** — 4 of 9 implemented: reading, imposed, booklet and N-up. 
-Missing: signature PDFs, step-and-repeat, cover and proofing-guide PDFs.
+**§22 PDF Export Modes** — 5 of 9 implemented: reading, imposed, booklet, N-up and
+cover. Missing: signature PDFs, step-and-repeat and proofing-guide PDFs.
 
 **§23 PDF Quality** — vectors, text and fonts *are* preserved (pages are copied by
 object reference, never rasterised — §23 and §37.3 honoured). But there are no

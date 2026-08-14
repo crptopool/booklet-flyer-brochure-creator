@@ -15,6 +15,7 @@ use print_calc::booklet::{BlankStrategy, SheetSpread};
 use print_calc::creep::{CreepMode, CreepResult};
 use print_calc::duplex::DuplexPlan;
 use pdf_ops::impose::{MarkOptions, SheetSide};
+use print_calc::cover::{CoverInputs, CoverKind, CoverLayout};
 use print_calc::plan::BookletPlan;
 use print_calc::presets::{BindingType, DuplexMode, PaperSize};
 
@@ -252,6 +253,41 @@ fn bound_reading_order(plan: BookletPlan) -> Vec<Option<u32>> {
 }
 
 // ---------------------------------------------------------------------------
+// Cover creator (Phase 7)
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn cover_defaults(kind: CoverKind) -> CoverInputs {
+    print_calc::cover::default_inputs(kind)
+}
+
+#[tauri::command]
+fn build_cover_layout(input: CoverInputs) -> Result<CoverLayout, String> {
+    print_calc::cover::cover_layout(input)
+}
+
+#[tauri::command]
+fn export_cover_pdf(layout: CoverLayout, output_path: String, title: String) -> Result<(f64, f64), String> {
+    pdf_ops::cover_pdf::export_cover(&layout, &output_path, &title)
+}
+
+/// Write raw bytes the frontend produced (used for eBook cover PNG/JPEG).
+#[tauri::command]
+fn write_bytes(path: String, bytes: Vec<u8>) -> Result<usize, String> {
+    if bytes.is_empty() {
+        return Err("nothing to write".into());
+    }
+    std::fs::write(&path, &bytes).map_err(|e| format!("Failed to write {path}: {e}"))?;
+    Ok(bytes.len())
+}
+
+/// Raw PDF bytes, so the webview can render real page content.
+#[tauri::command]
+fn read_pdf_bytes(path: String) -> Result<Vec<u8>, String> {
+    std::fs::read(&path).map_err(|e| format!("Failed to read {path}: {e}"))
+}
+
+// ---------------------------------------------------------------------------
 // Preflight
 // ---------------------------------------------------------------------------
 
@@ -296,6 +332,11 @@ pub fn run() {
             plan_sheets,
             export_imposed_pdf,
             bound_reading_order,
+            cover_defaults,
+            build_cover_layout,
+            export_cover_pdf,
+            write_bytes,
+            read_pdf_bytes,
             inspect_pdf,
             preview_operations,
             export_pdf,

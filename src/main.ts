@@ -1,15 +1,20 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openPath } from "@tauri-apps/plugin-opener";
+import { loadDocument, renderPage, unload as unloadPdf } from "./pdfRender";
+import { paintBoundSpread, paintSheet } from "./preview";
 import {
   bindingDiagram,
   boundSpreadDiagram,
   duplexFlipDiagram,
   gutterDiagram,
   pagesPerSheetDiagram,
+  coverDiagram,
+  ebookDiagram,
   resultDiagram,
   sheetSideDiagram,
 } from "./diagrams";
+import type { CoverLayoutView } from "./diagrams";
 
 // ---------------------------------------------------------------------------
 // Types mirroring the Rust backend
@@ -194,6 +199,21 @@ async function refreshPages() {
       </div>`;
     grid.appendChild(div);
   });
+  // Replace the placeholders with the real page artwork.
+  pages.forEach((vp, i) => {
+    if (vp.source_page === null) return;
+    const body = grid.children[i]?.querySelector<HTMLDivElement>(".thumb-body");
+    if (!body) return;
+    renderPage(vp.source_page, 100)
+      .then((c) => {
+        if (!c) return;
+        body.textContent = "";
+        body.appendChild(c);
+      })
+      .catch(() => {
+        /* keep the placeholder if the page cannot be rasterised */
+      });
+  });
   grid.querySelectorAll<HTMLButtonElement>("button").forEach((btn) => {
     btn.addEventListener("click", () => {
       const pos = Number(btn.dataset.pos);
@@ -254,6 +274,11 @@ el<HTMLButtonElement>("btn-open-pdf").addEventListener("click", async () => {
     if (!path) return;
     source = await invoke<PdfSource>("inspect_pdf", { path });
     operations = [];
+    try {
+      await loadDocument(String(path));
+    } catch {
+      unloadPdf(); // previews fall back to schematics
+    }
     el<HTMLSpanElement>("pdf-name").textContent = String(path);
     const info = el<HTMLDivElement>("pdf-info");
     info.classList.remove("hidden");
@@ -554,6 +579,8 @@ let currentPlan: BookletPlan | null = null;
 let currentSheets: SheetSide[] = [];
 let readingOrder: (number | null)[] = [];
 let simView: "bound" | "sheets" = "bound";
+/** Guards against a slow paint overwriting a newer one. */
+let simToken = 0;
 let simIndex = 0;
 /** Set when the sheets could not be built — export is then refused too. */
 let sheetError = "";
@@ -586,6 +613,13 @@ async function refreshSimulation(plan: BookletPlan) {
     sheetError = typeof e === "string" ? e : String(e);
   }
   readingOrder = await invoke<(number | null)[]>("bound_reading_order", { plan });
+
+  // Tell the user which document the export will actually be built from.
+  const hint = el<HTMLParagraphElement>("export-source-hint");
+  hint.innerHTML = source
+    ? `Built from <code>${escapeHtml(source.path)}</code> (${source.page_count} pages). Your original file is never modified.`
+    : "Import a PDF on the <strong>Import PDF</strong> tab first — the imposed file is built from it. Your original file is never modified.";
+
   renderSimulation();
 }
 
@@ -624,6 +658,17 @@ function renderSimulation() {
     const side = currentSheets[simIndex];
     stage.innerHTML = sheetSideDiagram(side, el<HTMLInputElement>("sim-marks").checked);
     pos.textContent = `Sheet side ${simIndex + 1} of ${total}`;
+    // Swap in the artwork-composited canvas once it is ready.
+    const token = ++simToken;
+    paintSheet(side, el<HTMLInputElement>("sim-marks").checked)
+      .then((c) => {
+        if (token !== simToken) return;
+        stage.innerHTML = "";
+        stage.appendChild(c);
+      })
+      .catch(() => {
+        /* the schematic already rendered */
+      });
     return;
   }
 
@@ -640,6 +685,22 @@ function renderSimulation() {
     el<HTMLSelectElement>("bk-side").value || "left"
   );
   pos.textContent = `Spread ${simIndex + 1} of ${total} · ${readingOrder.length} bound pages`;
+
+  const token = ++simToken;
+  const first = currentSheets[0]?.placements[0];
+  const aspect = first && first.width > 0 ? first.height / first.width : 210 / 148;
+  paintBoundSpread(
+    currentPlan.profile.key, s.left, s.right, s.leftPos, s.rightPos, aspect,
+    el<HTMLSelectElement>("bk-side").value || "left"
+  )
+    .then((c) => {
+      if (token !== simToken) return;
+      stage.innerHTML = "";
+      stage.appendChild(c);
+    })
+    .catch(() => {
+      /* the schematic already rendered */
+    });
 }
 
 document.querySelectorAll<HTMLButtonElement>("#sim-tabs .seg-btn").forEach((btn) => {
@@ -818,4 +879,170 @@ populatePaperSizes().catch(() => {
 
 renderBindingMethods().catch(() => {
   /* same — the panel stays empty when opened outside the desktop shell */
+});
+
+// ---------------------------------------------------------------------------
+// Cover creator (Phase 7)
+// ---------------------------------------------------------------------------
+
+interface CoverInputs {
+  kind: string;
+  trim_width_mm: number;
+  trim_height_mm: number;
+  page_count: number;
+  caliper_mm: number;
+  bleed_mm: number;
+  safe_margin_mm: number;
+  board_overhang_mm: number;
+  hinge_mm: number;
+  turn_in_mm: number;
+  flap_mm: number;
+  barcode: boolean;
+  pixel_width: number;
+  pixel_height: number;
+}
+
+interface CoverNote {
+  severity: string;
+  message: string;
+}
+
+type CoverLayout = CoverLayoutView & { notes: CoverNote[] };
+
+let coverLayout: CoverLayout | null = null;
+
+const numVal = (id: string) => Number(el<HTMLInputElement>(id).value) || 0;
+
+function coverKind(): string {
+  return el<HTMLSelectElement>("cv-kind").value;
+}
+
+function collectCoverInputs(): CoverInputs {
+  const kind = coverKind();
+  return {
+    kind,
+    trim_width_mm: kind === "ebook" ? numVal("cv-print-w") : numVal("cv-trim-w"),
+    trim_height_mm: numVal("cv-trim-h"),
+    page_count: Math.max(1, numVal("cv-pages")),
+    caliper_mm: numVal("cv-caliper"),
+    bleed_mm: numVal("cv-bleed"),
+    safe_margin_mm: numVal("cv-safe"),
+    board_overhang_mm: numVal("cv-overhang"),
+    hinge_mm: numVal("cv-hinge"),
+    turn_in_mm: numVal("cv-turnin"),
+    flap_mm: numVal("cv-flap"),
+    barcode: el<HTMLInputElement>("cv-barcode").checked,
+    pixel_width: Math.max(1, numVal("cv-px-w")),
+    pixel_height: Math.max(1, numVal("cv-px-h")),
+  };
+}
+
+async function refreshCover() {
+  const kind = coverKind();
+  const ebook = kind === "ebook";
+  el<HTMLElement>("cv-print-fields").classList.toggle("hidden", ebook);
+  el<HTMLElement>("cv-ebook-fields").classList.toggle("hidden", !ebook);
+  el<HTMLElement>("cv-case-fields").classList.toggle("hidden", kind === "paperback");
+  el<HTMLButtonElement>("btn-cover-png").classList.toggle("hidden", !ebook);
+  el<HTMLButtonElement>("btn-cover-pdf").classList.toggle("hidden", ebook);
+
+  try {
+    coverLayout = await invoke<CoverLayout>("build_cover_layout", { input: collectCoverInputs() });
+  } catch (e) {
+    el<HTMLDivElement>("cover-preview").innerHTML =
+      `<p class="sev-error">${escapeHtml(typeof e === "string" ? e : String(e))}</p>`;
+    return;
+  }
+
+  el<HTMLDivElement>("cover-preview").innerHTML = ebook
+    ? ebookDiagram(coverLayout.total_width_mm, coverLayout.total_height_mm)
+    : coverDiagram(coverLayout);
+
+  const notes = el<HTMLDivElement>("cover-notes");
+  notes.classList.remove("hidden");
+  notes.innerHTML = `<ul class="findings">${coverLayout.notes
+    .map((n) => `<li class="sev-${escapeHtml(n.severity.toLowerCase())}"><strong>${escapeHtml(n.severity)}</strong> ${escapeHtml(n.message)}</li>`)
+    .join("")}</ul>`;
+}
+
+for (const id of [
+  "cv-kind", "cv-trim-w", "cv-trim-h", "cv-pages", "cv-caliper", "cv-bleed", "cv-safe",
+  "cv-overhang", "cv-hinge", "cv-turnin", "cv-flap", "cv-barcode", "cv-px-w", "cv-px-h", "cv-print-w",
+]) {
+  el<HTMLElement>(id).addEventListener("change", () => refreshCover().catch(showError));
+  el<HTMLElement>(id).addEventListener("input", () => refreshCover().catch(showError));
+}
+
+el<HTMLSelectElement>("cv-preset").addEventListener("change", () => {
+  const v = el<HTMLSelectElement>("cv-preset").value;
+  if (v === "custom") return;
+  const [w, h] = v.split("x");
+  el<HTMLInputElement>("cv-px-w").value = w;
+  el<HTMLInputElement>("cv-px-h").value = h;
+  refreshCover().catch(showError);
+});
+
+el<HTMLButtonElement>("btn-cover-pdf").addEventListener("click", async () => {
+  if (!coverLayout) return;
+  try {
+    const out = await save({ filters: [{ name: "PDF", extensions: ["pdf"] }], defaultPath: `cover-${coverKind()}.pdf` });
+    if (!out) return;
+    const [w, h] = await invoke<[number, number]>("export_cover_pdf", {
+      layout: coverLayout,
+      outputPath: out,
+      title: "PrintPrep cover",
+    });
+    const box = el<HTMLDivElement>("cover-result");
+    box.classList.remove("hidden");
+    box.innerHTML = `<p class="sev-info">✓ Wrote a ${(w / 2.8346).toFixed(1)} × ${(h / 2.8346).toFixed(1)} mm
+      cover template to <code>${escapeHtml(out)}</code>, with trim and bleed boxes set.</p>
+      <p class="hint">Place your artwork behind the guides. The spine is
+      ${coverLayout.spine_width_mm.toFixed(2)} mm — confirm the caliper with your printer before going to press.</p>`;
+  } catch (e) {
+    showError(e);
+  }
+});
+
+/** eBook covers are screen artwork, so they export as a PNG. */
+el<HTMLButtonElement>("btn-cover-png").addEventListener("click", async () => {
+  if (!coverLayout) return;
+  try {
+    const out = await save({ filters: [{ name: "PNG image", extensions: ["png"] }], defaultPath: "ebook-cover.png" });
+    if (!out) return;
+    const w = Math.round(coverLayout.total_width_mm);
+    const h = Math.round(coverLayout.total_height_mm);
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d")!;
+    // A neutral template with the safe area marked, ready for artwork.
+    ctx.fillStyle = "#eef1fa";
+    ctx.fillRect(0, 0, w, h);
+    ctx.strokeStyle = "#22662c";
+    ctx.setLineDash([Math.max(4, w / 120), Math.max(4, w / 120)]);
+    ctx.lineWidth = Math.max(2, w / 400);
+    ctx.strokeRect(w * 0.08, h * 0.06, w * 0.84, h * 0.88);
+    ctx.setLineDash([]);
+    ctx.fillStyle = "#7c85a3";
+    ctx.font = `${Math.round(w / 28)}px Helvetica, Arial, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.fillText(`${w} × ${h}`, w / 2, h / 2);
+    ctx.font = `${Math.round(w / 44)}px Helvetica, Arial, sans-serif`;
+    ctx.fillText("keep text inside the dashed safe area", w / 2, h / 2 + w / 20);
+
+    const blob: Blob = await new Promise((res, rej) =>
+      canvas.toBlob((b) => (b ? res(b) : rej(new Error("Could not encode the PNG."))), "image/png")
+    );
+    const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
+    await invoke<number>("write_bytes", { path: out, bytes });
+    const box = el<HTMLDivElement>("cover-result");
+    box.classList.remove("hidden");
+    box.innerHTML = `<p class="sev-info">✓ Wrote a ${w} × ${h} px cover template to <code>${escapeHtml(out)}</code>.</p>`;
+  } catch (e) {
+    showError(e);
+  }
+});
+
+refreshCover().catch(() => {
+  /* outside Tauri the invoke calls are unavailable */
 });

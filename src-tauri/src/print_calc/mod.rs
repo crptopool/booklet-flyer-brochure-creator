@@ -5,6 +5,7 @@
 
 pub mod binding;
 pub mod booklet;
+pub mod cover;
 pub mod creep;
 pub mod dpi;
 pub mod duplex;

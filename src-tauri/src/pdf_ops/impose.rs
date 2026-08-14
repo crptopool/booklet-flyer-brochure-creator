@@ -12,6 +12,7 @@ use lopdf::content::{Content, Operation as Op};
 use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream};
 
 use crate::print_calc::imposition::CellPlacement;
+use crate::print_calc::units::mm_to_points;
 
 /// One source page placed on a sheet.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -46,6 +47,8 @@ pub struct MarkOptions {
     pub crop_marks: bool,
     pub fold_marks: bool,
     pub sheet_labels: bool,
+    /// Bleed in millimetres, written as the sheet's `/BleedBox`.
+    pub bleed_mm: f64,
 }
 
 impl Default for MarkOptions {
@@ -54,8 +57,25 @@ impl Default for MarkOptions {
             crop_marks: true,
             fold_marks: true,
             sheet_labels: true,
+            bleed_mm: 3.0,
         }
     }
+}
+
+/// Smallest rectangle enclosing every placed cell, as (x0, y0, x1, y1).
+///
+/// This is the area the finished sheet is trimmed to, so it becomes the
+/// `/TrimBox`. Returns `None` when nothing is placed.
+fn trim_bounds(side: &SheetSide) -> Option<(f64, f64, f64, f64)> {
+    let mut bounds: Option<(f64, f64, f64, f64)> = None;
+    for p in &side.placements {
+        let r = (p.x, p.y, p.x + p.width, p.y + p.height);
+        bounds = Some(match bounds {
+            None => r,
+            Some(b) => (b.0.min(r.0), b.1.min(r.1), b.2.max(r.2), b.3.max(r.3)),
+        });
+    }
+    bounds
 }
 
 /// One physical sheet side ready to be written.
@@ -377,13 +397,32 @@ pub fn export_imposed(
             );
         }
 
-        let page = dictionary! {
+        let mut page = dictionary! {
             "Type" => "Page",
             "Parent" => Object::Reference(pages_root_id),
             "MediaBox" => vec![num(0.0), num(0.0), num(side.width), num(side.height)],
             "Resources" => Object::Dictionary(resources),
             "Contents" => Object::Reference(content_id),
         };
+
+        // Production boxes so a commercial printer knows where to trim.
+        // TrimBox is the finished sheet; BleedBox extends it by the bleed
+        // allowance, clamped to the media so it stays a valid subset.
+        if let Some((x0, y0, x1, y1)) = trim_bounds(side) {
+            page.set("TrimBox", vec![num(x0), num(y0), num(x1), num(y1)]);
+            let b = mm_to_points(marks.bleed_mm.max(0.0));
+            page.set(
+                "BleedBox",
+                vec![
+                    num((x0 - b).max(0.0)),
+                    num((y0 - b).max(0.0)),
+                    num((x1 + b).min(side.width)),
+                    num((y1 + b).min(side.height)),
+                ],
+            );
+            // CropBox is what a viewer displays: the whole sheet, marks included.
+            page.set("CropBox", vec![num(0.0), num(0.0), num(side.width), num(side.height)]);
+        }
         kids.push(Object::Reference(doc.add_object(Object::Dictionary(page))));
     }
 
@@ -531,6 +570,49 @@ mod tests {
         make_pdf(&src, 2, a5().0, a5().1);
         let sides = vec![booklet_side(1, "front", Some(99), Some(1), 0)];
         assert!(export_imposed(&src, &sides, &tmp("imp_missing_out.pdf"), MarkOptions::default()).is_err());
+    }
+
+    #[test]
+    fn writes_trim_and_bleed_boxes() {
+        let src = tmp("imp_boxes_src.pdf");
+        let out = tmp("imp_boxes_out.pdf");
+        make_pdf(&src, 4, a5().0, a5().1);
+        let sides = vec![booklet_side(1, "front", Some(4), Some(1), 0)];
+        export_imposed(&src, &sides, &out, MarkOptions::default()).unwrap();
+
+        let doc = Document::load(&out).unwrap();
+        let (_, page_id) = doc.get_pages().into_iter().next().unwrap();
+        let dict = doc.get_object(page_id).unwrap().as_dict().unwrap();
+        let nums = |key: &[u8]| -> Vec<f64> {
+            dict.get(key).unwrap().as_array().unwrap().iter().filter_map(super::number).collect()
+        };
+        let trim = nums(b"TrimBox");
+        let bleed = nums(b"BleedBox");
+        // Two A5 cells fill the sheet, so the trim box spans both.
+        assert!((trim[2] - trim[0] - a5().0 * 2.0).abs() < 0.5);
+        // Bleed extends the trim but is clamped inside the media box.
+        assert!(bleed[0] >= 0.0 && bleed[1] >= 0.0);
+        assert!(bleed[2] <= a5().0 * 2.0 + 1e-6);
+        assert!(bleed[1] < trim[1] || trim[1] == 0.0);
+        assert!(dict.get(b"CropBox").is_ok());
+    }
+
+    #[test]
+    fn bleed_box_grows_with_the_bleed_setting() {
+        let side = booklet_side(1, "front", Some(1), Some(2), 0);
+        let (x0, y0, x1, y1) = trim_bounds(&side).unwrap();
+        assert_eq!((x0, y0), (0.0, 0.0));
+        assert!((x1 - a5().0 * 2.0).abs() < 1e-9);
+        assert!((y1 - a5().1).abs() < 1e-9);
+    }
+
+    #[test]
+    fn trim_bounds_of_an_empty_side_is_none() {
+        let side = SheetSide {
+            sheet_number: 1, side: "front".into(), width: 100.0, height: 100.0,
+            placements: vec![], fold_x: vec![],
+        };
+        assert!(trim_bounds(&side).is_none());
     }
 
     #[test]
