@@ -9,7 +9,7 @@
 import { drawPageInto, isLoaded } from "./pdfRender";
 
 const INK = "#1a1a2e";
-const MUTED = "#7c85a3";
+const MUTED = "#5b6480";
 const ACCENT = "#2c5fc4";
 const EDGE = "#ccd5ee";
 const WARN = "#c2410c";

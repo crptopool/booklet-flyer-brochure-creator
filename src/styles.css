@@ -25,7 +25,7 @@ body {
   width: 254px;
   flex: 0 0 254px;
   background: linear-gradient(180deg, #1d2440 0%, #232c4d 100%);
-  color: #cfd6ee;
+  color: #e3e8f7;
   padding: 0.9rem 0.7rem 2rem;
   transition: width 0.18s ease, flex-basis 0.18s ease, padding 0.18s ease;
   overflow-x: hidden;
@@ -46,7 +46,7 @@ body {
   flex: 0 0 32px;
   height: 32px;
   border-radius: 8px;
-  background: #4d7ede;
+  background: #3a63c4;
   color: white;
   font-weight: 700;
   font-size: 0.85rem;
@@ -68,7 +68,7 @@ body {
 }
 
 .brand-text small {
-  color: #8e9ac4;
+  color: #aab5d9;
   font-size: 0.72rem;
 }
 
@@ -83,7 +83,7 @@ body {
   gap: 0.55rem;
   background: none;
   border: none;
-  color: #8e9ac4;
+  color: #aab5d9;
   font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.06em;
@@ -94,8 +94,8 @@ body {
 }
 
 .group-head:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: #b9c3e4;
+  background: rgba(255, 255, 255, 0.08);
+  color: #dbe2f5;
 }
 
 .group-icon,
@@ -150,7 +150,7 @@ body {
   gap: 0.55rem;
   background: none;
   border: none;
-  color: #cfd6ee;
+  color: #e3e8f7;
   font-size: 0.9rem;
   padding: 0.5rem 0.5rem;
   border-radius: 7px;
@@ -159,12 +159,12 @@ body {
 }
 
 .nav-item:hover {
-  background: rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.1);
   color: #ffffff;
 }
 
 .nav-item.active {
-  background: #4d7ede;
+  background: #3a63c4;
   color: #ffffff;
   font-weight: 600;
 }
@@ -231,7 +231,7 @@ body {
   display: block;
   width: 13px;
   height: 2px;
-  background: #cfd6ee;
+  background: #e3e8f7;
   border-radius: 2px;
 }
 
@@ -720,4 +720,63 @@ button.ghost:hover {
 .assumption {
   color: #667;
   font-style: italic;
+}
+
+/* Sidebar footer: project actions */
+.sidebar-footer {
+  margin-top: 1.2rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.project-name {
+  color: #aab5d9;
+  font-size: 0.76rem;
+  padding: 0 0.5rem 0.45rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.project-actions {
+  display: flex;
+  gap: 0.3rem;
+  padding: 0 0.3rem;
+}
+
+.project-actions button {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.1);
+  color: #e3e8f7;
+  font-size: 0.78rem;
+  padding: 0.35rem 0.2rem;
+}
+
+.project-actions button:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.collapsed-sidebar .sidebar-footer {
+  display: none;
+}
+
+/* Simulation zoom and pan */
+.sim-controls button {
+  padding: 0.3rem 0.7rem;
+  font-size: 0.9rem;
+}
+
+#sim-stage {
+  overflow: hidden;
+  cursor: grab;
+  position: relative;
+}
+
+#sim-stage.panning {
+  cursor: grabbing;
+}
+
+#sim-stage > .zoom-layer {
+  transform-origin: center center;
+  transition: transform 0.06s linear;
 }

@@ -8,6 +8,7 @@ pub mod artwork;
 pub mod cover_pdf;
 pub mod document;
 pub mod export;
+pub mod images;
 pub mod impose;
 pub mod operations;
 pub mod sheets;

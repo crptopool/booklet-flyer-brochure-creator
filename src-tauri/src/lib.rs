@@ -6,6 +6,7 @@
 
 pub mod pdf_ops;
 pub mod preflight;
+pub mod project;
 pub mod print_calc;
 
 use pdf_ops::document::PdfSource;
@@ -20,7 +21,10 @@ use print_calc::assistant::{Advice, GlossaryEntry};
 use print_calc::cover::{CoverInputs, CoverKind, CoverLayout};
 use print_calc::printer::{PrinterProfile, ProfileFinding};
 use print_calc::plan::BookletPlan;
+use pdf_ops::images::{ColorUsage, PlacedImage};
 use print_calc::presets::{BindingType, DuplexMode, PaperSize};
+use print_calc::signatures::Signature;
+use project::Project;
 
 // ---------------------------------------------------------------------------
 // Presets
@@ -256,6 +260,192 @@ fn bound_reading_order(plan: BookletPlan) -> Vec<Option<u32>> {
 }
 
 // ---------------------------------------------------------------------------
+// Signature and step-and-repeat export (§22 modes 5 and 7)
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn divide_signatures(page_count: u32, signature_size: u32, balanced: bool) -> Result<Vec<Signature>, String> {
+    if balanced {
+        print_calc::signatures::balanced_signatures(page_count, signature_size)
+    } else {
+        print_calc::signatures::divide_into_signatures(page_count, signature_size)
+    }
+}
+
+/// Export one PDF per signature, or a single combined file.
+///
+/// Returns the paths written.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+fn export_signature_pdfs(
+    source_path: String,
+    page_count: u32,
+    signature_size: u32,
+    balanced: bool,
+    trim_mm: (f64, f64),
+    sheet_mm: (f64, f64),
+    back_rotation: i64,
+    output_path: String,
+    combined: bool,
+    marks: MarkOptions,
+) -> Result<Vec<String>, String> {
+    let source = pdf_ops::document::inspect_pdf(&source_path)?;
+    if source.modification_restricted {
+        return Err("The PDF is protected and cannot be modified.".into());
+    }
+    if page_count > source.page_count {
+        return Err(format!(
+            "The plan covers {page_count} pages but the document has {}.",
+            source.page_count
+        ));
+    }
+    let signatures = divide_signatures(page_count, signature_size, balanced)?;
+
+    if combined {
+        let mut all = Vec::new();
+        for sig in &signatures {
+            all.extend(pdf_ops::sheets::sheets_for_signature(
+                sig, page_count, trim_mm, sheet_mm, back_rotation,
+            )?);
+        }
+        pdf_ops::impose::export_imposed(&source_path, &all, &output_path, marks)?;
+        return Ok(vec![output_path]);
+    }
+
+    // One file per signature, numbered alongside the chosen name.
+    let stem = output_path.strip_suffix(".pdf").unwrap_or(&output_path).to_string();
+    let mut written = Vec::new();
+    for sig in &signatures {
+        let sides = pdf_ops::sheets::sheets_for_signature(sig, page_count, trim_mm, sheet_mm, back_rotation)?;
+        let path = format!("{stem}-signature-{:02}.pdf", sig.number);
+        pdf_ops::impose::export_imposed(&source_path, &sides, &path, marks)?;
+        written.push(path);
+    }
+    Ok(written)
+}
+
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+fn export_step_and_repeat_pdf(
+    source_path: String,
+    page: u32,
+    copies: u32,
+    rows: u32,
+    cols: u32,
+    trim_mm: (f64, f64),
+    sheet_mm: (f64, f64),
+    spacing_mm: f64,
+    output_path: String,
+    marks: MarkOptions,
+) -> Result<u32, String> {
+    let source = pdf_ops::document::inspect_pdf(&source_path)?;
+    if page > source.page_count {
+        return Err(format!("Page {page} does not exist — the document has {}.", source.page_count));
+    }
+    let sides = pdf_ops::sheets::sheets_for_step_and_repeat(
+        page, copies, rows, cols, trim_mm, sheet_mm, spacing_mm,
+    )?;
+    pdf_ops::impose::export_imposed(&source_path, &sides, &output_path, marks)
+}
+
+// ---------------------------------------------------------------------------
+// Image resolution (§7, §27)
+// ---------------------------------------------------------------------------
+
+/// Colour spaces the document uses, with guidance. Never converts.
+#[tauri::command]
+fn scan_color_usage(path: String, commercial_print: bool) -> Result<(ColorUsage, Vec<preflight::Finding>), String> {
+    let usage = pdf_ops::images::scan_colors(&path)?;
+    let mut findings = Vec::new();
+    if commercial_print && usage.device_rgb && !usage.device_cmyk {
+        findings.push(preflight::Finding {
+            severity: preflight::Severity::Warning,
+            code: "rgb_for_commercial_print".into(),
+            message: "The artwork is RGB but a commercial press prints CMYK. Your printer will convert it, and saturated RGB colours will shift. Convert it yourself if the exact colour matters — this application will not convert it for you.".into(),
+            page: None,
+        });
+    }
+    if usage.separation {
+        findings.push(preflight::Finding {
+            severity: preflight::Severity::Info,
+            code: "spot_colour".into(),
+            message: format!(
+                "Spot colours found: {}. Confirm with your printer that these plates are actually being run.",
+                if usage.spot_names.is_empty() { "unnamed".to_string() } else { usage.spot_names.join(", ") }
+            ),
+            page: None,
+        });
+    }
+    if findings.is_empty() {
+        findings.push(preflight::Finding {
+            severity: preflight::Severity::Info,
+            code: "colour_ok".into(),
+            message: format!("Colour spaces in use: {}. Left exactly as they are.", usage.summary()),
+            page: None,
+        });
+    }
+    Ok((usage, findings))
+}
+
+#[tauri::command]
+fn scan_image_resolution(path: String) -> Result<Vec<PlacedImage>, String> {
+    pdf_ops::images::scan_images(&path)
+}
+
+/// Preflight findings for every image that prints below the threshold.
+#[tauri::command]
+fn preflight_images(path: String, minimum_dpi: Option<f64>) -> Result<Vec<preflight::Finding>, String> {
+    let minimum = minimum_dpi.unwrap_or(print_calc::presets::MINIMUM_PRINT_DPI);
+    let recommended = print_calc::presets::RECOMMENDED_PRINT_DPI;
+    let images = pdf_ops::images::scan_images(&path)?;
+    let mut findings: Vec<preflight::Finding> = images
+        .iter()
+        .filter(|i| i.effective_dpi < minimum)
+        .map(|i| preflight::Finding {
+            severity: preflight::Severity::Warning,
+            code: "low_dpi".into(),
+            message: format!(
+                "Image on Page {} will print at approximately {:.0} DPI. Recommended minimum: {:.0} DPI; preferred: {:.0} DPI.",
+                i.page, i.effective_dpi, minimum, recommended
+            ),
+            page: Some(i.page),
+        })
+        .collect();
+    if findings.is_empty() {
+        findings.push(preflight::Finding {
+            severity: preflight::Severity::Info,
+            code: "dpi_ok".into(),
+            message: if images.is_empty() {
+                "No raster images found — nothing to check for resolution.".into()
+            } else {
+                format!("All {} image(s) print at or above {minimum:.0} DPI.", images.len())
+            },
+            page: None,
+        });
+    }
+    Ok(findings)
+}
+
+// ---------------------------------------------------------------------------
+// Projects (§29)
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn new_project() -> Project {
+    Project::default()
+}
+
+#[tauri::command]
+fn save_project(project: Project, path: String) -> Result<(), String> {
+    project::save(&project, &path)
+}
+
+#[tauri::command]
+fn load_project(path: String) -> Result<(Project, bool), String> {
+    project::load(&path)
+}
+
+// ---------------------------------------------------------------------------
 // Cover creator (Phase 7)
 // ---------------------------------------------------------------------------
 
@@ -446,6 +636,15 @@ pub fn run() {
             assistant_explain,
             assistant_glossary,
             assistant_troubleshooting,
+            divide_signatures,
+            export_signature_pdfs,
+            export_step_and_repeat_pdf,
+            scan_image_resolution,
+            scan_color_usage,
+            preflight_images,
+            new_project,
+            save_project,
+            load_project,
             inspect_pdf,
             preview_operations,
             export_pdf,
