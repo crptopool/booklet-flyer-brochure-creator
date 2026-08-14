@@ -9,20 +9,102 @@
   </head>
 
   <body>
-    <header>
-      <h1>PrintPrep</h1>
-      <p class="subtitle">Booklet, flyer &amp; brochure print preparation</p>
-    </header>
+<button id="sidebar-toggle" class="sidebar-toggle" aria-label="Collapse or expand the menu"
+            aria-expanded="true" title="Collapse menu (Ctrl+B)">
+      <span class="burger"></span>
+    </button>
 
-    <nav id="tabs">
-      <button class="tab active" data-tab="pdf">Import PDF</button>
-      <button class="tab" data-tab="booklet">Booklet</button>
-      <button class="tab" data-tab="nup">N-Up / Step &amp; Repeat</button>
-      <button class="tab" data-tab="binding">Binding &amp; Spine</button>
-      <button class="tab" data-tab="cover">Cover Creator</button>
-    </nav>
+    <div class="shell">
+      <aside id="sidebar" aria-label="Main menu">
+        <div class="brand">
+          <span class="brand-mark">PP</span>
+          <span class="brand-text">
+            <strong>PrintPrep</strong>
+            <small>Print preparation</small>
+          </span>
+        </div>
 
-    <main>
+        <nav id="menu">
+          <div class="menu-group" data-group="document">
+            <button type="button" class="group-head" aria-expanded="true">
+              <span class="group-icon">📄</span>
+              <span class="group-label">Document</span>
+              <span class="chevron"></span>
+            </button>
+            <div class="group-items">
+              <button type="button" class="nav-item active" data-tab="pdf" title="Import PDF">
+                <span class="item-icon">📥</span><span class="item-label">Import &amp; Pages</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="menu-group" data-group="layout">
+            <button type="button" class="group-head" aria-expanded="true">
+              <span class="group-icon">📐</span>
+              <span class="group-label">Layout &amp; Imposition</span>
+              <span class="chevron"></span>
+            </button>
+            <div class="group-items">
+              <button type="button" class="nav-item" data-tab="booklet" title="Booklet and binding">
+                <span class="item-icon">📘</span><span class="item-label">Booklet &amp; Binding</span>
+              </button>
+              <button type="button" class="nav-item" data-tab="nup" title="N-up and step and repeat">
+                <span class="item-icon">▦</span><span class="item-label">N-Up &amp; Repeat</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="menu-group" data-group="covers">
+            <button type="button" class="group-head" aria-expanded="true">
+              <span class="group-icon">📕</span>
+              <span class="group-label">Covers</span>
+              <span class="chevron"></span>
+            </button>
+            <div class="group-items">
+              <button type="button" class="nav-item" data-tab="cover" title="Cover creator">
+                <span class="item-icon">🎨</span><span class="item-label">Cover Creator</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="menu-group" data-group="setup">
+            <button type="button" class="group-head" aria-expanded="true">
+              <span class="group-icon">🖨</span>
+              <span class="group-label">Print Setup</span>
+              <span class="chevron"></span>
+            </button>
+            <div class="group-items">
+              <button type="button" class="nav-item" data-tab="printer" title="Printer profiles">
+                <span class="item-icon">⚙</span><span class="item-label">Printer Profiles</span>
+              </button>
+              <button type="button" class="nav-item" data-tab="binding" title="Binding and spine calculator">
+                <span class="item-icon">🧮</span><span class="item-label">Binding &amp; Spine</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="menu-group" data-group="help">
+            <button type="button" class="group-head" aria-expanded="true">
+              <span class="group-icon">💬</span>
+              <span class="group-label">Assistant &amp; Help</span>
+              <span class="chevron"></span>
+            </button>
+            <div class="group-items">
+              <button type="button" class="nav-item" data-tab="assistant" title="Ask the print assistant">
+                <span class="item-icon">✨</span><span class="item-label">Ask the Assistant</span>
+              </button>
+              <button type="button" class="nav-item" data-tab="glossary" title="Glossary of print terms">
+                <span class="item-icon">📖</span><span class="item-label">Glossary</span>
+              </button>
+              <button type="button" class="nav-item" data-tab="trouble" title="Troubleshooting">
+                <span class="item-icon">🔧</span><span class="item-label">Troubleshooting</span>
+              </button>
+            </div>
+          </div>
+        </nav>
+      </aside>
+
+      <main>
       <!-- Screen: PDF import / pages -->
       <section id="panel-pdf" class="panel active">
         <h2>Import PDF</h2>
@@ -267,6 +349,39 @@
           </div>
         </div>
 
+        <h3>Artwork</h3>
+        <p class="hint">
+          Optional. Place a PNG or JPEG behind the guides — or leave it empty and
+          export the template to design against.
+        </p>
+        <div class="row">
+          <button id="btn-cover-art">Choose artwork…</button>
+          <span id="cover-art-name" class="filename">No artwork chosen</span>
+          <button id="btn-cover-art-clear" class="ghost hidden">Clear</button>
+        </div>
+        <div class="form-grid" id="cover-art-opts">
+          <label>Place on
+            <select id="cv-art-target">
+              <option value="full_wrap">Whole wrap (back + spine + front)</option>
+              <option value="front_panel">Front panel only</option>
+              <option value="back_panel">Back panel only</option>
+            </select>
+          </label>
+          <label>Fit
+            <select id="cv-art-fit">
+              <option value="fill">Fill — cover the area, crop overflow</option>
+              <option value="fit">Fit — show all of it, may leave margins</option>
+              <option value="stretch">Stretch — ignore aspect ratio</option>
+            </select>
+          </label>
+          <label>Guides
+            <select id="cv-art-guides">
+              <option value="true">Draw guides over the artwork</option>
+              <option value="false">Artwork only — final file</option>
+            </select>
+          </label>
+        </div>
+
         <div id="cover-preview" class="card"></div>
         <div id="cover-notes" class="card hidden"></div>
         <div class="row">
@@ -276,6 +391,114 @@
         <div id="cover-result" class="card hidden"></div>
       </section>
 
-    </main>
+      <!-- Screen: Printer profiles -->
+      <section id="panel-printer" class="panel">
+        <h2>Printer Profiles</h2>
+        <p class="hint">
+          Record what a printer can actually do and the application will check
+          jobs against it before you waste paper. Profiles are saved on this
+          machine.
+        </p>
+        <div class="row">
+          <label class="grow">Saved profiles
+            <select id="pp-list"></select>
+          </label>
+          <button id="btn-pp-new">New</button>
+          <button id="btn-pp-delete" class="ghost">Delete</button>
+        </div>
+        <div class="form-grid">
+          <label>Printer name<input type="text" id="pp-name" value="Office printer" /></label>
+          <label>Max sheet width (mm)<input type="number" id="pp-maxw" value="297" min="1" step="1" /></label>
+          <label>Max sheet height (mm)<input type="number" id="pp-maxh" value="420" min="1" step="1" /></label>
+          <label>Minimum margin (mm)<input type="number" id="pp-margin" value="5" min="0" step="0.5" /></label>
+          <label>Double-sided
+            <select id="pp-duplex"><option value="true">Supported</option><option value="false">Not supported</option></select>
+          </label>
+          <label>Borderless
+            <select id="pp-borderless"><option value="false">Not supported</option><option value="true">Supported</option></select>
+          </label>
+          <label>Known flip behaviour
+            <select id="pp-flip">
+              <option value="unknown">Unknown — run the test</option>
+              <option value="long_edge">Flips on long edge</option>
+              <option value="short_edge">Flips on short edge</option>
+            </select>
+          </label>
+          <label>Preferred feed
+            <select id="pp-orientation">
+              <option value="either">Either</option>
+              <option value="portrait">Portrait</option>
+              <option value="landscape">Landscape</option>
+            </select>
+          </label>
+          <label>Supported sizes<input type="text" id="pp-sizes" value="A4, A5, Letter" /></label>
+        </div>
+        <div class="row">
+          <button id="btn-pp-save">Save profile</button>
+        </div>
+
+        <h3>Check a job against this printer</h3>
+        <div class="form-grid">
+          <label>Sheet size<select id="pp-check-sheet"></select></label>
+          <label>Orientation
+            <select id="pp-check-orient"><option value="landscape">Landscape</option><option value="portrait">Portrait</option></select>
+          </label>
+          <label>Bleed (mm)<input type="number" id="pp-check-bleed" value="0" min="0" step="0.5" /></label>
+          <label>Duplex
+            <select id="pp-check-duplex">
+              <option value="short_edge">Flip on short edge</option>
+              <option value="long_edge">Flip on long edge</option>
+              <option value="simplex">Single-sided</option>
+            </select>
+          </label>
+        </div>
+        <button id="btn-pp-check">Check job</button>
+        <div id="pp-findings" class="card hidden"></div>
+      </section>
+
+      <!-- Screen: Assistant -->
+      <section id="panel-assistant" class="panel">
+        <h2>Ask the Print Assistant</h2>
+        <p class="hint">
+          Describe the job in your own words. The assistant works out the
+          settings and explains them — every number it quotes is computed by the
+          same deterministic code the rest of the app uses, never guessed.
+        </p>
+        <div class="row">
+          <input type="text" id="as-input" class="grow"
+                 placeholder="e.g. I have a 36-page A5 PDF and want to print it as an A4 saddle-stitched booklet" />
+          <button id="btn-assistant">Ask</button>
+        </div>
+        <div class="row chips" id="as-examples">
+          <button type="button" class="chip">I have a 36-page A5 PDF and want to print it as an A4 saddle-stitched booklet</button>
+          <button type="button" class="chip">200-page A5 perfect bound book on 90 gsm</button>
+          <button type="button" class="chip">a 37-page A4 spiral bound single-sided manual</button>
+          <button type="button" class="chip">22-page A5 booklet</button>
+        </div>
+        <div id="as-answer" class="card hidden"></div>
+        <div class="row hidden" id="as-apply-row">
+          <button id="btn-assistant-apply">Apply these settings to the Booklet screen</button>
+        </div>
+      </section>
+
+      <!-- Screen: Glossary -->
+      <section id="panel-glossary" class="panel">
+        <h2>Glossary</h2>
+        <p class="hint">Every technical option in the app, in plain language.</p>
+        <div class="row">
+          <input type="text" id="gl-search" class="grow" placeholder="Search — e.g. bleed, creep, spine" />
+        </div>
+        <div id="gl-list" class="term-grid"></div>
+      </section>
+
+      <!-- Screen: Troubleshooting -->
+      <section id="panel-trouble" class="panel">
+        <h2>Troubleshooting</h2>
+        <p class="hint">Common print problems, what causes them and how to fix them.</p>
+        <div id="tr-list" class="term-grid"></div>
+      </section>
+
+      </main>
+    </div>
   </body>
 </html>

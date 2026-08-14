@@ -146,14 +146,76 @@ interface BookletPlan {
 // Tabs
 // ---------------------------------------------------------------------------
 
-document.querySelectorAll<HTMLButtonElement>(".tab").forEach((tab) => {
-  tab.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
-    document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
-    tab.classList.add("active");
-    document.getElementById(`panel-${tab.dataset.tab}`)?.classList.add("active");
+/** Show one screen and mark its menu entry active. */
+function showPanel(name: string) {
+  document.querySelectorAll(".nav-item").forEach((t) => t.classList.remove("active"));
+  document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
+  document.querySelector(`.nav-item[data-tab="${name}"]`)?.classList.add("active");
+  document.getElementById(`panel-${name}`)?.classList.add("active");
+  try {
+    localStorage.setItem("printprep.panel", name);
+  } catch {
+    /* storage is optional */
+  }
+  window.scrollTo({ top: 0 });
+}
+
+document.querySelectorAll<HTMLButtonElement>(".nav-item").forEach((item) => {
+  item.addEventListener("click", () => showPanel(item.dataset.tab!));
+});
+
+// Menu groups fold away individually.
+document.querySelectorAll<HTMLButtonElement>(".group-head").forEach((head) => {
+  head.addEventListener("click", () => {
+    const group = head.parentElement!;
+    const collapsed = group.classList.toggle("collapsed");
+    head.setAttribute("aria-expanded", String(!collapsed));
+    try {
+      localStorage.setItem(`printprep.group.${group.getAttribute("data-group")}`, String(collapsed));
+    } catch {
+      /* storage is optional */
+    }
   });
 });
+
+/** Collapse the whole sidebar to an icon rail. */
+function setSidebarCollapsed(collapsed: boolean) {
+  document.body.classList.toggle("collapsed-sidebar", collapsed);
+  const btn = el<HTMLButtonElement>("sidebar-toggle");
+  btn.setAttribute("aria-expanded", String(!collapsed));
+  btn.title = collapsed ? "Expand menu (Ctrl+B)" : "Collapse menu (Ctrl+B)";
+  try {
+    localStorage.setItem("printprep.sidebar", collapsed ? "collapsed" : "open");
+  } catch {
+    /* storage is optional */
+  }
+}
+
+el<HTMLButtonElement>("sidebar-toggle").addEventListener("click", () => {
+  setSidebarCollapsed(!document.body.classList.contains("collapsed-sidebar"));
+});
+
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
+    e.preventDefault();
+    setSidebarCollapsed(!document.body.classList.contains("collapsed-sidebar"));
+  }
+});
+
+// Restore the previous session's menu state.
+try {
+  setSidebarCollapsed(localStorage.getItem("printprep.sidebar") === "collapsed");
+  document.querySelectorAll<HTMLElement>(".menu-group").forEach((group) => {
+    if (localStorage.getItem(`printprep.group.${group.getAttribute("data-group")}`) === "true") {
+      group.classList.add("collapsed");
+      group.querySelector(".group-head")?.setAttribute("aria-expanded", "false");
+    }
+  });
+  const last = localStorage.getItem("printprep.panel");
+  if (last && document.getElementById(`panel-${last}`)) showPanel(last);
+} catch {
+  /* storage is optional */
+}
 
 function el<T extends HTMLElement>(id: string): T {
   return document.getElementById(id) as T;
@@ -910,6 +972,7 @@ interface CoverNote {
 type CoverLayout = CoverLayoutView & { notes: CoverNote[] };
 
 let coverLayout: CoverLayout | null = null;
+let coverArtPath: string | null = null;
 
 const numVal = (id: string) => Number(el<HTMLInputElement>(id).value) || 0;
 
@@ -982,20 +1045,50 @@ el<HTMLSelectElement>("cv-preset").addEventListener("change", () => {
   refreshCover().catch(showError);
 });
 
+el<HTMLButtonElement>("btn-cover-art").addEventListener("click", async () => {
+  try {
+    const picked = await open({
+      filters: [{ name: "Image", extensions: ["png", "jpg", "jpeg"] }],
+      multiple: false,
+    });
+    if (!picked) return;
+    coverArtPath = String(picked);
+    el<HTMLSpanElement>("cover-art-name").textContent = coverArtPath;
+    el<HTMLButtonElement>("btn-cover-art-clear").classList.remove("hidden");
+  } catch (e) {
+    showError(e);
+  }
+});
+
+el<HTMLButtonElement>("btn-cover-art-clear").addEventListener("click", () => {
+  coverArtPath = null;
+  el<HTMLSpanElement>("cover-art-name").textContent = "No artwork chosen";
+  el<HTMLButtonElement>("btn-cover-art-clear").classList.add("hidden");
+});
+
 el<HTMLButtonElement>("btn-cover-pdf").addEventListener("click", async () => {
   if (!coverLayout) return;
   try {
     const out = await save({ filters: [{ name: "PDF", extensions: ["pdf"] }], defaultPath: `cover-${coverKind()}.pdf` });
     if (!out) return;
+    const artwork = coverArtPath
+      ? {
+          path: coverArtPath,
+          target: el<HTMLSelectElement>("cv-art-target").value,
+          fit: el<HTMLSelectElement>("cv-art-fit").value,
+          show_guides: el<HTMLSelectElement>("cv-art-guides").value === "true",
+        }
+      : null;
     const [w, h] = await invoke<[number, number]>("export_cover_pdf", {
       layout: coverLayout,
       outputPath: out,
       title: "PrintPrep cover",
+      artwork,
     });
     const box = el<HTMLDivElement>("cover-result");
     box.classList.remove("hidden");
     box.innerHTML = `<p class="sev-info">✓ Wrote a ${(w / 2.8346).toFixed(1)} × ${(h / 2.8346).toFixed(1)} mm
-      cover template to <code>${escapeHtml(out)}</code>, with trim and bleed boxes set.</p>
+      cover template to <code>${escapeHtml(out)}</code>, with trim and bleed boxes set${coverArtPath ? ", artwork placed" : ""}.</p>
       <p class="hint">Place your artwork behind the guides. The spine is
       ${coverLayout.spine_width_mm.toFixed(2)} mm — confirm the caliper with your printer before going to press.</p>`;
   } catch (e) {
@@ -1044,5 +1137,259 @@ el<HTMLButtonElement>("btn-cover-png").addEventListener("click", async () => {
 });
 
 refreshCover().catch(() => {
+  /* outside Tauri the invoke calls are unavailable */
+});
+
+// ---------------------------------------------------------------------------
+// Printer profiles (§25)
+// ---------------------------------------------------------------------------
+
+interface PrinterProfile {
+  name: string;
+  max_width_mm: number;
+  max_height_mm: number;
+  duplex_supported: boolean;
+  borderless_supported: boolean;
+  min_margin_mm: number;
+  supported_sizes: string[];
+  preferred_orientation: string;
+  duplex_behaviour: string;
+  notes: string;
+}
+
+interface ProfileFinding {
+  severity: string;
+  message: string;
+}
+
+let profiles: PrinterProfile[] = [];
+
+function readProfileForm(): PrinterProfile {
+  return {
+    name: el<HTMLInputElement>("pp-name").value.trim(),
+    max_width_mm: numVal("pp-maxw"),
+    max_height_mm: numVal("pp-maxh"),
+    duplex_supported: el<HTMLSelectElement>("pp-duplex").value === "true",
+    borderless_supported: el<HTMLSelectElement>("pp-borderless").value === "true",
+    min_margin_mm: numVal("pp-margin"),
+    supported_sizes: el<HTMLInputElement>("pp-sizes").value.split(",").map((s) => s.trim()).filter(Boolean),
+    preferred_orientation: el<HTMLSelectElement>("pp-orientation").value,
+    duplex_behaviour: el<HTMLSelectElement>("pp-flip").value,
+    notes: "",
+  };
+}
+
+function writeProfileForm(p: PrinterProfile) {
+  el<HTMLInputElement>("pp-name").value = p.name;
+  el<HTMLInputElement>("pp-maxw").value = String(p.max_width_mm);
+  el<HTMLInputElement>("pp-maxh").value = String(p.max_height_mm);
+  el<HTMLSelectElement>("pp-duplex").value = String(p.duplex_supported);
+  el<HTMLSelectElement>("pp-borderless").value = String(p.borderless_supported);
+  el<HTMLInputElement>("pp-margin").value = String(p.min_margin_mm);
+  el<HTMLInputElement>("pp-sizes").value = p.supported_sizes.join(", ");
+  el<HTMLSelectElement>("pp-orientation").value = p.preferred_orientation;
+  el<HTMLSelectElement>("pp-flip").value = p.duplex_behaviour;
+}
+
+function renderProfileList() {
+  const sel = el<HTMLSelectElement>("pp-list");
+  sel.innerHTML = profiles.length
+    ? profiles.map((p) => `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)}</option>`).join("")
+    : `<option value="">No profiles saved yet</option>`;
+}
+
+async function loadProfiles() {
+  profiles = await invoke<PrinterProfile[]>("list_printer_profiles");
+  renderProfileList();
+  if (profiles.length) writeProfileForm(profiles[0]);
+}
+
+el<HTMLSelectElement>("pp-list").addEventListener("change", () => {
+  const found = profiles.find((p) => p.name === el<HTMLSelectElement>("pp-list").value);
+  if (found) writeProfileForm(found);
+});
+
+el<HTMLButtonElement>("btn-pp-new").addEventListener("click", async () => {
+  writeProfileForm(await invoke<PrinterProfile>("default_printer_profile"));
+});
+
+el<HTMLButtonElement>("btn-pp-save").addEventListener("click", async () => {
+  try {
+    profiles = await invoke<PrinterProfile[]>("save_printer_profile", { profile: readProfileForm() });
+    renderProfileList();
+    el<HTMLSelectElement>("pp-list").value = readProfileForm().name;
+  } catch (e) {
+    showError(e);
+  }
+});
+
+el<HTMLButtonElement>("btn-pp-delete").addEventListener("click", async () => {
+  try {
+    const name = el<HTMLSelectElement>("pp-list").value;
+    if (!name) return;
+    profiles = await invoke<PrinterProfile[]>("delete_printer_profile", { name });
+    renderProfileList();
+    if (profiles.length) writeProfileForm(profiles[0]);
+  } catch (e) {
+    showError(e);
+  }
+});
+
+el<HTMLButtonElement>("btn-pp-check").addEventListener("click", async () => {
+  try {
+    const sizes = await invoke<PaperSize[]>("list_paper_sizes");
+    const chosen = sizes.find((s) => s.name === el<HTMLSelectElement>("pp-check-sheet").value) ?? sizes[1];
+    const landscape = el<HTMLSelectElement>("pp-check-orient").value === "landscape";
+    const findings = await invoke<ProfileFinding[]>("check_job_against_printer", {
+      profile: readProfileForm(),
+      sheetMm: landscape ? [chosen.height_mm, chosen.width_mm] : [chosen.width_mm, chosen.height_mm],
+      sheetName: chosen.name,
+      bleedMm: numVal("pp-check-bleed"),
+      duplex: el<HTMLSelectElement>("pp-check-duplex").value,
+    });
+    const box = el<HTMLDivElement>("pp-findings");
+    box.classList.remove("hidden");
+    box.innerHTML = `<ul class="findings">${findings
+      .map((f) => `<li class="sev-${escapeHtml(f.severity.toLowerCase())}"><strong>${escapeHtml(f.severity)}</strong> ${escapeHtml(f.message)}</li>`)
+      .join("")}</ul>`;
+  } catch (e) {
+    showError(e);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Print assistant (§26) and guidance panels (§28)
+// ---------------------------------------------------------------------------
+
+interface Understanding {
+  page_count: number | null;
+  trim_size: string | null;
+  sheet_size: string | null;
+  binding: string | null;
+  duplex: boolean | null;
+  gsm: number | null;
+  assumptions: string[];
+  unresolved: string[];
+}
+
+interface Advice {
+  understanding: Understanding;
+  plan: BookletPlan | null;
+  explanation: string[];
+  warnings: string[];
+  suggested_trim: string | null;
+  suggested_sheet: string | null;
+  suggested_pages_per_side: number;
+  suggested_duplex: string;
+  sheet_is_landscape: boolean;
+}
+
+interface GlossaryEntry {
+  term: string;
+  short: string;
+  recommended: string;
+  why: string;
+  example: string;
+  consequence: string;
+}
+
+let lastAdvice: Advice | null = null;
+
+async function askAssistant(question: string) {
+  if (!question.trim()) return;
+  const advice = await invoke<Advice>("assistant_advise", { request: question });
+  lastAdvice = advice;
+  const box = el<HTMLDivElement>("as-answer");
+  box.classList.remove("hidden");
+
+  const list = (items: string[]) => items.map((x) => `<li>${escapeHtml(x)}</li>`).join("");
+  const u = advice.understanding;
+
+  box.innerHTML = `
+    <div class="answer-block">
+      ${u.assumptions.length ? `<h3>Before I answer</h3><ul class="assumption">${list(u.assumptions)}</ul>` : ""}
+      ${u.unresolved.length ? `<h3>I still need to know</h3><ul>${list(u.unresolved)}</ul>` : ""}
+      <h3>What I would do</h3>
+      <ul>${list(advice.explanation)}</ul>
+      ${advice.warnings.length ? `<h3>Watch out for</h3><ul class="findings">${advice.warnings.map((w) => `<li class="sev-warning">${escapeHtml(w)}</li>`).join("")}</ul>` : ""}
+      <p class="hint">Every figure above is calculated, not estimated — the same code produces the imposition and the exported file.</p>
+    </div>`;
+
+  el<HTMLElement>("as-apply-row").classList.toggle("hidden", !advice.plan);
+}
+
+el<HTMLButtonElement>("btn-assistant").addEventListener("click", () => {
+  askAssistant(el<HTMLInputElement>("as-input").value).catch(showError);
+});
+el<HTMLInputElement>("as-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") askAssistant(el<HTMLInputElement>("as-input").value).catch(showError);
+});
+document.querySelectorAll<HTMLButtonElement>("#as-examples .chip").forEach((chip) => {
+  chip.addEventListener("click", () => {
+    el<HTMLInputElement>("as-input").value = chip.textContent!.trim();
+    askAssistant(chip.textContent!.trim()).catch(showError);
+  });
+});
+
+/** Push the assistant's recommendation into the booklet form. */
+el<HTMLButtonElement>("btn-assistant-apply").addEventListener("click", () => {
+  const a = lastAdvice;
+  if (!a?.plan) return;
+  selectedBinding = a.plan.profile.key;
+  marginOverridden = false;
+  el<HTMLInputElement>("bk-pages").value = String(a.plan.source_pages);
+  if (a.suggested_trim) el<HTMLSelectElement>("bk-trim").value = a.suggested_trim;
+  if (a.suggested_sheet) el<HTMLSelectElement>("bk-sheet").value = a.suggested_sheet;
+  el<HTMLSelectElement>("bk-orientation").value = a.sheet_is_landscape ? "landscape" : "portrait";
+  el<HTMLSelectElement>("bk-per-side").value = String(a.suggested_pages_per_side);
+  el<HTMLSelectElement>("bk-sides").value = a.suggested_duplex === "simplex" ? "single" : "double";
+  if (a.suggested_duplex !== "simplex") el<HTMLSelectElement>("bk-flip").value = a.suggested_duplex;
+  renderBindingMethods()
+    .then(() => showPanel("booklet"))
+    .catch(showError);
+});
+
+function termCard(e: GlossaryEntry): string {
+  return `
+    <article class="term">
+      <h3>${escapeHtml(e.term)}</h3>
+      <p>${escapeHtml(e.short)}</p>
+      <dl>
+        <dt>Recommended</dt><dd>${escapeHtml(e.recommended)}</dd>
+        <dt>Why it matters</dt><dd>${escapeHtml(e.why)}</dd>
+        <dt>Example</dt><dd>${escapeHtml(e.example)}</dd>
+        <dt>If ignored</dt><dd>${escapeHtml(e.consequence)}</dd>
+      </dl>
+    </article>`;
+}
+
+async function renderGlossary(term = "") {
+  const entries = await invoke<GlossaryEntry[]>("assistant_explain", { term });
+  el<HTMLDivElement>("gl-list").innerHTML = entries.length
+    ? entries.map(termCard).join("")
+    : `<p class="hint">Nothing matched “${escapeHtml(term)}”.</p>`;
+}
+
+el<HTMLInputElement>("gl-search").addEventListener("input", () => {
+  renderGlossary(el<HTMLInputElement>("gl-search").value).catch(showError);
+});
+
+async function renderTroubleshooting() {
+  const entries = await invoke<GlossaryEntry[]>("assistant_troubleshooting");
+  el<HTMLDivElement>("tr-list").innerHTML = entries.map(termCard).join("");
+}
+
+async function initExtras() {
+  const sizes = await invoke<PaperSize[]>("list_paper_sizes");
+  el<HTMLSelectElement>("pp-check-sheet").innerHTML = sizes
+    .map((s) => `<option value="${s.name}">${s.name}</option>`)
+    .join("");
+  el<HTMLSelectElement>("pp-check-sheet").value = "A4";
+  await loadProfiles();
+  await renderGlossary();
+  await renderTroubleshooting();
+}
+
+initExtras().catch(() => {
   /* outside Tauri the invoke calls are unavailable */
 });

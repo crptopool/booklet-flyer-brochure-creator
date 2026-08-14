@@ -2,7 +2,7 @@
 
 **Audited against:** `AI_Agent_Print_Imposition_Booklet_Cover_Requirements.md`
 **Date:** 2026-08-14
-**Codebase:** Rust backend + TypeScript frontend, 161 passing unit tests
+**Codebase:** Rust backend + TypeScript frontend, 206 passing unit tests
 
 **Branches audited:** `main`, `copilot/create-print-layout-application`, `copilot/ai-agent-requirements-specification`
 
@@ -33,6 +33,18 @@
 > board overhang, hinge, turn-in, flaps, safe areas and a barcode reservation,
 > exporting a guide PDF (or PNG for eBook). This also completes §11.4 hardcover
 > geometry.
+>
+> **Update 4 — printer profiles, the assistant and cover artwork.**
+> **§25 printer profiles** are saved per machine and check a job for sheet fit,
+> duplex capability, flip-direction mismatch, borderless/bleed conflict and
+> unconfigured sizes. **Phase 8 / §26 the assistant** reads a plain-language
+> request and answers with a full plan — it is a rule-based parser over the
+> existing deterministic modules, offline and reproducible, which is what §33
+> requires; **§28 guidance** ships as a searchable glossary and a
+> troubleshooting screen. The **Cover Creator now places artwork** (PNG or
+> JPEG) into the template, with fill/fit/stretch and a guides-off mode for the
+> final file. The UI was also reorganised into a collapsible categorised
+> sidebar.
 
 ---
 
@@ -85,9 +97,9 @@ Legend: ✅ complete · ◐ partial (calculation exists, not delivered to user) 
 | 12 | DPI validation | ◐ | engine correct and applied to eBook cover artwork; PDF image XObjects still unscanned |
 | 13 | Saddle-stitch support | ✅ | sequencing, imposition, folds and staple guidance |
 | 14 | Binding guidance | ✅ | per-binding margins, GSM→caliper guidance |
-| 15 | Deterministic sequencing | ✅ | pure Rust, 161 tests, zero model inference — §33 honoured |
+| 15 | Deterministic sequencing | ✅ | pure Rust, 206 tests, zero model inference — §33 honoured |
 
-### SHOULD HAVE — ~60%
+### SHOULD HAVE — ~70%
 
 | Requirement | Status | Notes |
 |---|---|---|
@@ -99,7 +111,7 @@ Legend: ✅ complete · ◐ partial (calculation exists, not delivered to user) 
 | Spine calculation | ✅ | both spec formulas + custom pages-per-mm |
 | Step-and-repeat | ◐ | optimum-grid fitting ✅ (Scenario C passes); no PDF |
 | Cut-and-stack | ◐ | sequence ✅; no PDF |
-| Printer profiles | ✗ | §25 absent |
+| Printer profiles | ✅ | saved per machine; jobs checked for fit, duplex, flip direction and bleed |
 | Automated preflight | ◐ | 6 of ~16 checks implemented |
 
 ### COULD HAVE — 0%
@@ -119,8 +131,8 @@ artwork bleed extension, AI cover design, cloud print integration — none prese
 | 4 | Booklet Printing | ~95% — sequencing, duplex flip, imposed PDF, fold marks and previews all ✅ |
 | 5 | Binding Intelligence | ~95% — five binding methods with full settings profiles; hardcover board, hinge and turn-in geometry now on the Cover Creator |
 | 6 | Signature Engine | ~50% — division ✅, export and labels ✗ |
-| 7 | Cover Designer | ~90% — all four cover kinds with spine, guides and barcode area; no artwork placement yet |
-| 8 | AI Assistant | 0% |
+| 7 | Cover Designer | ~95% — all four cover kinds with spine, guides, barcode area and artwork placement |
+| 8 | AI Assistant | ~85% — request understanding, full recommendation, glossary and troubleshooting; no free-form conversation |
 | 9 | Automated Preflight | ~35% |
 | 10 | Advanced Commercial | 0% |
 
@@ -184,14 +196,20 @@ quality presets, no compression control and no PDF/X.
 
 **§24 Color** — absent. No RGB/CMYK detection or ICC handling.
 
-**§25 Printer profiles** — absent.
+**§25 Printer profiles** — implemented. Name, maximum sheet, duplex and
+borderless support, minimum printable margin, configured sizes, preferred feed
+and known duplex-flip behaviour, saved to the platform config directory. A job
+can be checked against a profile before printing.
 
-**§26 AI Assistant** — absent. Worth stating plainly: the specification is titled
-"AI Agent Requirements" and Phase 8 is an AI assistant, but the application
-contains no AI functionality whatsoever. Note this is *not* a correctness problem —
-§33 explicitly requires that page order and measurements come from deterministic
-code rather than model inference, and the codebase honours that rule rigorously.
-What is missing is the advisory layer on top.
+**§26 Assistant** — implemented, and worth being precise about what it is. It
+reads a plain-language request, extracts page count, sizes, binding, duplex and
+paper weight, states its assumptions, asks for anything genuinely missing, and
+answers with a complete plan it can apply to the Booklet screen. It is a
+**rule-based parser over the deterministic modules, not a language model** — it
+runs offline, needs no key and gives the same answer every time. That is the
+correct reading of §33, which requires page order and measurements to come from
+deterministic code rather than model inference. What it does not do is hold a
+free-form conversation or answer questions outside print preparation.
 
 **§27 Preflight** — implemented: encrypted, empty document, page-count vs binding,
 mixed page sizes, stored rotations, missing bleed, wrong page size (7 checks).
@@ -200,7 +218,10 @@ printable region, blank-page detection, excessive scaling, missing fonts,
 transparency risks, thin margins, cover/spine mismatch (9 checks). Severity levels
 INFO/WARNING/ERROR are correctly modelled.
 
-**§28 Guidance panel** — only two static hint sentences.
+**§28 Guidance panel** — a searchable glossary gives every term a short
+explanation, a recommended value, why it matters, an example and the consequence
+of ignoring it, in the exact shape §28 specifies. A troubleshooting screen covers
+the common failure modes.
 
 **§29 Project management** — none. No save, Save As, autosave, recent projects,
 undo, redo, duplicate, or settings import/export. Operations live in a JavaScript

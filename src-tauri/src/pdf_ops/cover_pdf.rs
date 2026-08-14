@@ -8,8 +8,29 @@
 use lopdf::content::{Content, Operation as Op};
 use lopdf::{dictionary, Document, Object, Stream};
 
+use crate::pdf_ops::artwork::{draw_ops, embed_image, FitMode};
 use crate::print_calc::cover::{CoverKind, CoverLayout, RectMm};
 use crate::print_calc::units::mm_to_points;
+
+/// Which part of the cover the supplied artwork covers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtworkTarget {
+    /// The whole artboard, bleed included.
+    FullWrap,
+    FrontPanel,
+    BackPanel,
+}
+
+/// Artwork to place into the template before the guides are drawn.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CoverArtwork {
+    pub path: String,
+    pub target: ArtworkTarget,
+    pub fit: FitMode,
+    /// Draw the guides over the artwork. Turn off for the final file.
+    pub show_guides: bool,
+}
 
 fn num(v: f64) -> Object {
     Object::Real(v as f32)
@@ -49,6 +70,16 @@ fn text_ops(ops: &mut Vec<Op>, x_mm: f64, y_mm: f64, size: f64, gray: f64, text:
 
 /// Write the cover template. Returns the artboard size in points.
 pub fn export_cover(layout: &CoverLayout, output_path: &str, title: &str) -> Result<(f64, f64), String> {
+    export_cover_with_artwork(layout, output_path, title, None)
+}
+
+/// Write the cover, optionally placing artwork behind the guides.
+pub fn export_cover_with_artwork(
+    layout: &CoverLayout,
+    output_path: &str,
+    title: &str,
+    artwork: Option<&CoverArtwork>,
+) -> Result<(f64, f64), String> {
     if layout.kind == CoverKind::Ebook {
         return Err(
             "An eBook cover is screen artwork — export it as PNG or JPEG rather than a print PDF."
@@ -62,7 +93,44 @@ pub fn export_cover(layout: &CoverLayout, output_path: &str, title: &str) -> Res
     let page_w = mm_to_points(layout.total_width_mm);
     let page_h = mm_to_points(layout.total_height_mm);
 
-    let mut ops: Vec<Op> = vec![Op::new("q", vec![])];
+    let mut doc = Document::with_version("1.7");
+    let mut ops: Vec<Op> = Vec::new();
+    let mut xobjects = lopdf::Dictionary::new();
+
+    // Artwork goes down first so every guide stays visible on top of it.
+    if let Some(art) = artwork {
+        let embedded = embed_image(&mut doc, &art.path)?;
+        let target = match art.target {
+            ArtworkTarget::FullWrap => RectMm {
+                x: 0.0,
+                y: 0.0,
+                width: layout.total_width_mm,
+                height: layout.total_height_mm,
+            },
+            ArtworkTarget::FrontPanel => layout.front_panel,
+            ArtworkTarget::BackPanel => layout
+                .back_panel
+                .ok_or("This cover has no back panel to place artwork on.")?,
+        };
+        xobjects.set("Art", Object::Reference(embedded.id));
+        ops.extend(draw_ops(
+            &embedded,
+            "Art",
+            mm_to_points(target.x),
+            mm_to_points(target.y),
+            mm_to_points(target.width),
+            mm_to_points(target.height),
+            art.fit,
+        ));
+    }
+
+    let show_guides = artwork.map(|a| a.show_guides).unwrap_or(true);
+    if !show_guides {
+        // Artwork only — no guides, no labels.
+        return finish_cover(doc, ops, xobjects, layout, output_path, page_w, page_h, false);
+    }
+
+    ops.push(Op::new("q", vec![]));
 
     // Bleed edge — the outer artboard.
     set_stroke(&mut ops, 0.85, 0.35, 0.1, 0.75, Some((2, 2)));
@@ -143,11 +211,22 @@ pub fn export_cover(layout: &CoverLayout, output_path: &str, title: &str) -> Res
 
     ops.push(Op::new("Q", vec![]));
 
-    let mut doc = Document::with_version("1.7");
+    finish_cover(doc, ops, xobjects, layout, output_path, page_w, page_h, true)
+}
+
+/// Assemble the page, write the boxes and save.
+#[allow(clippy::too_many_arguments)]
+fn finish_cover(
+    mut doc: Document,
+    ops: Vec<Op>,
+    xobjects: lopdf::Dictionary,
+    layout: &CoverLayout,
+    output_path: &str,
+    page_w: f64,
+    page_h: f64,
+    with_font: bool,
+) -> Result<(f64, f64), String> {
     let pages_id = doc.new_object_id();
-    let font_id = doc.add_object(dictionary! {
-        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
-    });
     let content_id = doc.add_object(Stream::new(
         dictionary! {},
         Content { operations: ops }
@@ -155,13 +234,22 @@ pub fn export_cover(layout: &CoverLayout, output_path: &str, title: &str) -> Res
             .map_err(|e| format!("Failed to build cover content: {e}"))?,
     ));
 
+    let mut resources = dictionary! {};
+    if with_font {
+        let font_id = doc.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+        });
+        resources.set("Font", Object::Dictionary(dictionary! { "G" => Object::Reference(font_id) }));
+    }
+    if !xobjects.is_empty() {
+        resources.set("XObject", Object::Dictionary(xobjects));
+    }
+
     let mut page = dictionary! {
         "Type" => "Page",
         "Parent" => Object::Reference(pages_id),
         "MediaBox" => vec![num(0.0), num(0.0), num(page_w), num(page_h)],
-        "Resources" => dictionary! {
-            "Font" => dictionary! { "G" => Object::Reference(font_id) },
-        },
+        "Resources" => Object::Dictionary(resources),
         "Contents" => Object::Reference(content_id),
     };
     // The trim box is the finished cover; the media box carries the bleed.
@@ -188,7 +276,6 @@ pub fn export_cover(layout: &CoverLayout, output_path: &str, title: &str) -> Res
     );
     let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => Object::Reference(pages_id) });
     doc.trailer.set("Root", catalog);
-    doc.compress();
     doc.save(output_path).map_err(|e| format!("Failed to save cover PDF: {e}"))?;
 
     Ok((page_w, page_h))
@@ -249,5 +336,110 @@ mod tests {
         let dict = doc.get_object(page_id).unwrap().as_dict().unwrap();
         assert!(dict.get(b"TrimBox").is_ok());
         assert!(dict.get(b"BleedBox").is_ok());
+    }
+}
+
+#[cfg(test)]
+mod artwork_tests {
+    use super::*;
+    use crate::pdf_ops::document::inspect_pdf;
+    use crate::print_calc::cover::{cover_layout, default_inputs};
+
+    fn tmp(name: &str) -> String {
+        std::env::temp_dir().join(name).to_string_lossy().into_owned()
+    }
+
+    fn artwork_png(path: &str) {
+        let mut img = image::RgbImage::new(600, 400);
+        for (x, y, p) in img.enumerate_pixels_mut() {
+            *p = image::Rgb([(x / 3) as u8, (y / 2) as u8, 200]);
+        }
+        img.save(path).unwrap();
+    }
+
+    #[test]
+    fn places_artwork_across_the_full_wrap() {
+        let layout = cover_layout(default_inputs(CoverKind::Paperback)).unwrap();
+        let art = tmp("cover_art.png");
+        artwork_png(&art);
+        let out = tmp("cover_with_art.pdf");
+        export_cover_with_artwork(
+            &layout,
+            &out,
+            "Art",
+            Some(&CoverArtwork {
+                path: art,
+                target: ArtworkTarget::FullWrap,
+                fit: FitMode::Fill,
+                show_guides: true,
+            }),
+        )
+        .unwrap();
+        assert_eq!(inspect_pdf(&out).unwrap().page_count, 1);
+        // The image is embedded as an XObject on the page.
+        let doc = Document::load(&out).unwrap();
+        assert!(doc.objects.values().any(|o| o
+            .as_stream()
+            .map(|s| s.dict.get(b"Subtype").and_then(|v| v.as_name()).map(|n| n == b"Image").unwrap_or(false))
+            .unwrap_or(false)));
+    }
+
+    #[test]
+    fn guides_can_be_switched_off_for_the_final_file() {
+        let layout = cover_layout(default_inputs(CoverKind::Paperback)).unwrap();
+        let art = tmp("cover_art2.png");
+        artwork_png(&art);
+        let with = tmp("cover_guides_on.pdf");
+        let without = tmp("cover_guides_off.pdf");
+        let mk = |path: &str, guides: bool| {
+            export_cover_with_artwork(
+                &layout, path, "Art",
+                Some(&CoverArtwork {
+                    path: art.clone(), target: ArtworkTarget::FullWrap,
+                    fit: FitMode::Fill, show_guides: guides,
+                }),
+            ).unwrap()
+        };
+        mk(&with, true);
+        mk(&without, false);
+        // Dropping the guides and labels makes for a smaller content stream.
+        assert!(std::fs::metadata(&without).unwrap().len() < std::fs::metadata(&with).unwrap().len());
+    }
+
+    #[test]
+    fn front_panel_artwork_is_accepted_and_back_panel_needs_one() {
+        let layout = cover_layout(default_inputs(CoverKind::Paperback)).unwrap();
+        let art = tmp("cover_art3.png");
+        artwork_png(&art);
+        let mk = |target: ArtworkTarget| {
+            export_cover_with_artwork(
+                &layout, &tmp("cover_panel.pdf"), "Art",
+                Some(&CoverArtwork { path: art.clone(), target, fit: FitMode::Fit, show_guides: true }),
+            )
+        };
+        assert!(mk(ArtworkTarget::FrontPanel).is_ok());
+        assert!(mk(ArtworkTarget::BackPanel).is_ok());
+
+        // An eBook layout has no back panel at all.
+        let ebook = cover_layout(default_inputs(CoverKind::Ebook)).unwrap();
+        assert!(export_cover_with_artwork(
+            &ebook, &tmp("cover_ebook_art.pdf"), "Art",
+            Some(&CoverArtwork { path: art, target: ArtworkTarget::BackPanel, fit: FitMode::Fit, show_guides: true }),
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn a_missing_artwork_file_is_reported() {
+        let layout = cover_layout(default_inputs(CoverKind::Paperback)).unwrap();
+        let err = export_cover_with_artwork(
+            &layout, &tmp("cover_missing_art.pdf"), "Art",
+            Some(&CoverArtwork {
+                path: "/nonexistent/art.png".into(), target: ArtworkTarget::FullWrap,
+                fit: FitMode::Fill, show_guides: true,
+            }),
+        )
+        .unwrap_err();
+        assert!(err.contains("Failed to read"));
     }
 }

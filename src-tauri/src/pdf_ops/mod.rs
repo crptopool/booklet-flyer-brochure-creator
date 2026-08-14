@@ -4,6 +4,7 @@
 //! instructions applied to a virtual page list and only materialised
 //! into a new PDF at export time.
 
+pub mod artwork;
 pub mod cover_pdf;
 pub mod document;
 pub mod export;

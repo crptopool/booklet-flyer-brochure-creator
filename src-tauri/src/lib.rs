@@ -15,7 +15,10 @@ use print_calc::booklet::{BlankStrategy, SheetSpread};
 use print_calc::creep::{CreepMode, CreepResult};
 use print_calc::duplex::DuplexPlan;
 use pdf_ops::impose::{MarkOptions, SheetSide};
+use pdf_ops::cover_pdf::CoverArtwork;
+use print_calc::assistant::{Advice, GlossaryEntry};
 use print_calc::cover::{CoverInputs, CoverKind, CoverLayout};
+use print_calc::printer::{PrinterProfile, ProfileFinding};
 use print_calc::plan::BookletPlan;
 use print_calc::presets::{BindingType, DuplexMode, PaperSize};
 
@@ -267,8 +270,105 @@ fn build_cover_layout(input: CoverInputs) -> Result<CoverLayout, String> {
 }
 
 #[tauri::command]
-fn export_cover_pdf(layout: CoverLayout, output_path: String, title: String) -> Result<(f64, f64), String> {
-    pdf_ops::cover_pdf::export_cover(&layout, &output_path, &title)
+fn export_cover_pdf(
+    layout: CoverLayout,
+    output_path: String,
+    title: String,
+    artwork: Option<CoverArtwork>,
+) -> Result<(f64, f64), String> {
+    pdf_ops::cover_pdf::export_cover_with_artwork(&layout, &output_path, &title, artwork.as_ref())
+}
+
+// ---------------------------------------------------------------------------
+// Printer capability profiles
+// ---------------------------------------------------------------------------
+
+/// Where saved profiles live, inside the platform config directory.
+fn profiles_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    use tauri::Manager;
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("Cannot locate the configuration directory: {e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot create {}: {e}", dir.display()))?;
+    Ok(dir.join("printer-profiles.json"))
+}
+
+#[tauri::command]
+fn list_printer_profiles(app: tauri::AppHandle) -> Result<Vec<PrinterProfile>, String> {
+    let path = profiles_path(&app)?;
+    if !path.exists() {
+        return Ok(vec![]);
+    }
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("Cannot read saved profiles: {e}"))?;
+    serde_json::from_str(&text).map_err(|e| format!("Saved profiles are unreadable: {e}"))
+}
+
+/// Add or replace a profile, matched on name.
+#[tauri::command]
+fn save_printer_profile(app: tauri::AppHandle, profile: PrinterProfile) -> Result<Vec<PrinterProfile>, String> {
+    if profile.name.trim().is_empty() {
+        return Err("The profile needs a name.".into());
+    }
+    let mut all = list_printer_profiles(app.clone())?;
+    match all.iter_mut().find(|p| p.name == profile.name) {
+        Some(existing) => *existing = profile,
+        None => all.push(profile),
+    }
+    let path = profiles_path(&app)?;
+    std::fs::write(&path, serde_json::to_string_pretty(&all).map_err(|e| e.to_string())?)
+        .map_err(|e| format!("Cannot save profiles: {e}"))?;
+    Ok(all)
+}
+
+#[tauri::command]
+fn delete_printer_profile(app: tauri::AppHandle, name: String) -> Result<Vec<PrinterProfile>, String> {
+    let mut all = list_printer_profiles(app.clone())?;
+    all.retain(|p| p.name != name);
+    let path = profiles_path(&app)?;
+    std::fs::write(&path, serde_json::to_string_pretty(&all).map_err(|e| e.to_string())?)
+        .map_err(|e| format!("Cannot save profiles: {e}"))?;
+    Ok(all)
+}
+
+#[tauri::command]
+fn default_printer_profile() -> PrinterProfile {
+    PrinterProfile::default()
+}
+
+#[tauri::command]
+fn check_job_against_printer(
+    profile: PrinterProfile,
+    sheet_mm: (f64, f64),
+    sheet_name: Option<String>,
+    bleed_mm: f64,
+    duplex: DuplexMode,
+) -> Vec<ProfileFinding> {
+    print_calc::printer::check_job(&profile, sheet_mm, sheet_name.as_deref(), bleed_mm, duplex)
+}
+
+// ---------------------------------------------------------------------------
+// Print assistant (Phase 8)
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn assistant_advise(request: String) -> Result<Advice, String> {
+    print_calc::assistant::advise(&request)
+}
+
+#[tauri::command]
+fn assistant_explain(term: String) -> Vec<GlossaryEntry> {
+    print_calc::assistant::explain(&term)
+}
+
+#[tauri::command]
+fn assistant_glossary() -> Vec<GlossaryEntry> {
+    print_calc::assistant::glossary()
+}
+
+#[tauri::command]
+fn assistant_troubleshooting() -> Vec<GlossaryEntry> {
+    print_calc::assistant::troubleshooting()
 }
 
 /// Write raw bytes the frontend produced (used for eBook cover PNG/JPEG).
@@ -337,6 +437,15 @@ pub fn run() {
             export_cover_pdf,
             write_bytes,
             read_pdf_bytes,
+            list_printer_profiles,
+            save_printer_profile,
+            delete_printer_profile,
+            default_printer_profile,
+            check_job_against_printer,
+            assistant_advise,
+            assistant_explain,
+            assistant_glossary,
+            assistant_troubleshooting,
             inspect_pdf,
             preview_operations,
             export_pdf,
