@@ -19,6 +19,7 @@
       <button class="tab" data-tab="booklet">Booklet</button>
       <button class="tab" data-tab="nup">N-Up / Step &amp; Repeat</button>
       <button class="tab" data-tab="binding">Binding &amp; Spine</button>
+      <button class="tab" data-tab="cover">Cover Creator</button>
     </nav>
 
     <main>
@@ -209,6 +210,72 @@
         <button id="btn-binding">Calculate</button>
         <div id="binding-result" class="card hidden"></div>
       </section>
+      <!-- Screen: Cover creator -->
+      <section id="panel-cover" class="panel">
+        <h2>Cover Creator</h2>
+        <p class="hint">
+          Build an eBook cover or a full print-ready wrap. The spine width is
+          calculated from the real page count and paper caliper, and every
+          guide below is drawn to scale from those numbers.
+        </p>
+
+        <div class="form-grid">
+          <label>Cover type
+            <select id="cv-kind">
+              <option value="paperback">Paperback full wrap</option>
+              <option value="hardcover">Hardcover / case bound</option>
+              <option value="dust_jacket">Dust jacket (with flaps)</option>
+              <option value="ebook">eBook front cover</option>
+            </select>
+          </label>
+        </div>
+
+        <div id="cv-print-fields">
+          <div class="form-grid">
+            <label>Trim width (mm)<input type="number" id="cv-trim-w" value="148" min="1" step="0.5" /></label>
+            <label>Trim height (mm)<input type="number" id="cv-trim-h" value="210" min="1" step="0.5" /></label>
+            <label>Page count<input type="number" id="cv-pages" value="200" min="1" /></label>
+            <label>Paper caliper (mm)<input type="number" id="cv-caliper" value="0.092" min="0.001" step="0.001" /></label>
+            <label>Bleed (mm)<input type="number" id="cv-bleed" value="3" min="0" step="0.5" /></label>
+            <label>Safe margin (mm)<input type="number" id="cv-safe" value="6" min="0" step="0.5" /></label>
+          </div>
+          <div class="form-grid" id="cv-case-fields">
+            <label>Board overhang (mm)<input type="number" id="cv-overhang" value="3" min="0" step="0.5" /></label>
+            <label>Hinge groove (mm)<input type="number" id="cv-hinge" value="8" min="0" step="0.5" /></label>
+            <label>Turn-in / wrap (mm)<input type="number" id="cv-turnin" value="16" min="0" step="0.5" /></label>
+            <label>Flap width (mm)<input type="number" id="cv-flap" value="80" min="0" step="1" /></label>
+          </div>
+          <label class="inline-check">
+            <input type="checkbox" id="cv-barcode" checked /> Reserve the standard barcode area
+          </label>
+        </div>
+
+        <div id="cv-ebook-fields" class="hidden">
+          <div class="form-grid">
+            <label>Preset
+              <select id="cv-preset">
+                <option value="1600x2400">1600 × 2400 (1:1.5, common)</option>
+                <option value="2560x1600">2560 × 1600 (landscape)</option>
+                <option value="1875x2500">1875 × 2500 (1:1.33)</option>
+                <option value="2048x3072">2048 × 3072 (high resolution)</option>
+                <option value="custom">Custom</option>
+              </select>
+            </label>
+            <label>Width (px)<input type="number" id="cv-px-w" value="1600" min="1" /></label>
+            <label>Height (px)<input type="number" id="cv-px-h" value="2400" min="1" /></label>
+            <label>If also printed, width (mm)<input type="number" id="cv-print-w" value="148" min="0" step="0.5" /></label>
+          </div>
+        </div>
+
+        <div id="cover-preview" class="card"></div>
+        <div id="cover-notes" class="card hidden"></div>
+        <div class="row">
+          <button id="btn-cover-pdf">Save cover PDF…</button>
+          <button id="btn-cover-png" class="hidden">Save cover PNG…</button>
+        </div>
+        <div id="cover-result" class="card hidden"></div>
+      </section>
+
     </main>
   </body>
 </html>

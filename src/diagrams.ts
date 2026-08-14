@@ -668,3 +668,125 @@ export function resultDiagram(key: string, sheets: number, totalPages: number): 
     label(cx, H - 8, wire ? "Twin loops close through the punched holes" : "The coil threads through every hole", "middle", 10);
   return svg(W, H, body, "Finished punch-bound document lying flat");
 }
+
+// ---------------------------------------------------------------------------
+// 6. Cover layout — panels, folds and guides drawn to scale
+// ---------------------------------------------------------------------------
+
+interface RectMm { x: number; y: number; width: number; height: number }
+
+export interface CoverLayoutView {
+  kind: string;
+  total_width_mm: number;
+  total_height_mm: number;
+  spine_width_mm: number;
+  trim_rect: RectMm;
+  back_panel: RectMm | null;
+  spine_panel: RectMm | null;
+  front_panel: RectMm;
+  back_flap: RectMm | null;
+  front_flap: RectMm | null;
+  safe_areas: RectMm[];
+  barcode_rect: RectMm | null;
+  fold_x_mm: number[];
+  hinge_x_mm: number[];
+  effective_dpi: number | null;
+}
+
+/** Scale drawing of the full cover artboard with every production guide. */
+export function coverDiagram(l: CoverLayoutView): string {
+  const MAXW = 460;
+  const MAXH = 300;
+  const pad = 26;
+  const s = Math.min((MAXW - pad * 2) / l.total_width_mm, (MAXH - pad * 2) / l.total_height_mm);
+  const W = l.total_width_mm * s + pad * 2;
+  const H = l.total_height_mm * s + pad * 2 + 14;
+  const ox = pad;
+  const oy = pad;
+  // Millimetre space is bottom-up; SVG is top-down.
+  const X = (mm: number) => ox + mm * s;
+  const Y = (mm: number, h = 0) => oy + (l.total_height_mm - mm - h) * s;
+
+  const rect = (r: RectMm, fill: string, stroke: string, dash = "", width = 1) =>
+    `<rect x="${X(r.x)}" y="${Y(r.y, r.height)}" width="${r.width * s}" height="${r.height * s}"
+      fill="${fill}" stroke="${stroke}" stroke-width="${width}" ${dash ? `stroke-dasharray="${dash}"` : ""}/>`;
+
+  let body = "";
+  // Bleed artboard.
+  body += `<rect x="${ox}" y="${oy}" width="${l.total_width_mm * s}" height="${l.total_height_mm * s}"
+    fill="#fff8f4" stroke="${WARN}" stroke-width="1" stroke-dasharray="3 3"/>`;
+
+  // Panels.
+  if (l.back_flap) body += rect(l.back_flap, "#f6f7fc", MUTED);
+  if (l.back_panel) body += rect(l.back_panel, PAGE_FILL, MUTED);
+  if (l.spine_panel) body += rect(l.spine_panel, "#dfe6f8", MUTED);
+  body += rect(l.front_panel, PAPER, MUTED);
+  if (l.front_flap) body += rect(l.front_flap, "#f6f7fc", MUTED);
+
+  // Trim line.
+  body += rect(l.trim_rect, "none", INK, "", 1.2);
+
+  // Safe areas.
+  for (const a of l.safe_areas) body += rect(a, "none", "#22662c", "3 3", 0.8);
+
+  // Hinge grooves.
+  for (const hx of l.hinge_x_mm) {
+    body += `<line x1="${X(hx)}" y1="${oy}" x2="${X(hx)}" y2="${oy + l.total_height_mm * s}"
+      stroke="#7333a0" stroke-width="1" stroke-dasharray="1 2"/>`;
+  }
+  // Spine folds.
+  for (const fx of l.fold_x_mm) {
+    body += `<line x1="${X(fx)}" y1="${oy}" x2="${X(fx)}" y2="${oy + l.total_height_mm * s}"
+      stroke="${ACCENT}" stroke-width="1.2" stroke-dasharray="4 3"/>`;
+  }
+  // Barcode reservation.
+  if (l.barcode_rect) {
+    body += rect(l.barcode_rect, "rgba(194,65,12,0.12)", WARN, "", 0.9);
+    body += label(X(l.barcode_rect.x + l.barcode_rect.width / 2), Y(l.barcode_rect.y + l.barcode_rect.height / 2) + 3, "barcode", "middle", 7, WARN);
+  }
+
+  // Panel names.
+  const name = (r: RectMm | null, text: string) =>
+    r && r.width * s > 26 ? label(X(r.x + r.width / 2), Y(r.y + r.height) + 13, text, "middle", 8, INK) : "";
+  body += name(l.back_flap, "FLAP");
+  body += name(l.back_panel, "BACK");
+  body += name(l.front_panel, "FRONT");
+  body += name(l.front_flap, "FLAP");
+  if (l.spine_panel && l.spine_panel.width * s > 16) {
+    body += label(X(l.spine_panel.x + l.spine_panel.width / 2), Y(l.spine_panel.y + l.spine_panel.height) + 13, "SPINE", "middle", 7, ACCENT);
+  }
+
+  body += label(W / 2, H - 16,
+    `Artboard ${l.total_width_mm.toFixed(1)} × ${l.total_height_mm.toFixed(1)} mm · trims to ${l.trim_rect.width.toFixed(1)} × ${l.trim_rect.height.toFixed(1)} mm`,
+    "middle", 9, INK);
+  body += label(W / 2, H - 4,
+    l.spine_width_mm > 0 ? `Spine ${l.spine_width_mm.toFixed(2)} mm` : "Front panel only", "middle", 9);
+
+  return svg(W, H, body, "Cover layout with trim, bleed, spine and safe-area guides");
+}
+
+/** eBook cover proportions with the safe title area indicated. */
+export function ebookDiagram(pxWidth: number, pxHeight: number): string {
+  const W = 300;
+  const H = 250;
+  const maxH = 190;
+  const ratio = pxHeight / pxWidth;
+  const h = Math.min(maxH, 150 * ratio);
+  const w = h / ratio;
+  const x = (W - w) / 2;
+  const y = 22;
+
+  let body = `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${PAGE_FILL}" stroke="${MUTED}" stroke-width="1.4"/>`;
+  body += `<rect x="${x + w * 0.08}" y="${y + h * 0.06}" width="${w * 0.84}" height="${h * 0.88}"
+    fill="none" stroke="#22662c" stroke-width="0.8" stroke-dasharray="3 3"/>`;
+  // Suggested title and author blocks.
+  body += `<rect x="${x + w * 0.15}" y="${y + h * 0.14}" width="${w * 0.7}" height="${h * 0.1}" rx="2" fill="${ACCENT}" opacity="0.28"/>`;
+  body += `<rect x="${x + w * 0.25}" y="${y + h * 0.78}" width="${w * 0.5}" height="${h * 0.06}" rx="2" fill="${MUTED}" opacity="0.3"/>`;
+  body += label(x + w / 2, y + h * 0.22, "title", "middle", 9, ACCENT);
+  body += label(x + w / 2, y + h * 0.845, "author", "middle", 8);
+
+  body += label(W / 2, 14, `${pxWidth} × ${pxHeight} px · 1:${ratio.toFixed(2)}`, "middle", 11, INK);
+  body += label(W / 2, y + h + 18, "Keep text inside the dashed area — stores crop the edges", "middle", 9);
+  body += label(W / 2, y + h + 32, "No bleed, no spine, no trim allowance", "middle", 9);
+  return svg(W, H, body, "eBook cover proportions");
+}
