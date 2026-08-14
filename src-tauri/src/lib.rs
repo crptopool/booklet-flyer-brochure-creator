@@ -10,9 +10,12 @@ pub mod print_calc;
 
 use pdf_ops::document::PdfSource;
 use pdf_ops::operations::{Operation, VirtualPage};
+use print_calc::binding::BindingProfile;
 use print_calc::booklet::{BlankStrategy, SheetSpread};
 use print_calc::creep::{CreepMode, CreepResult};
-use print_calc::presets::{BindingType, PaperSize};
+use print_calc::duplex::DuplexPlan;
+use print_calc::plan::BookletPlan;
+use print_calc::presets::{BindingType, DuplexMode, PaperSize};
 
 // ---------------------------------------------------------------------------
 // Presets
@@ -130,6 +133,49 @@ fn recommended_binding_margin_mm(binding: BindingType) -> f64 {
 }
 
 // ---------------------------------------------------------------------------
+// Binding methods, duplex logic and the combined booklet plan
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn list_booklet_bindings() -> Vec<BindingProfile> {
+    print_calc::binding::booklet_binding_profiles()
+}
+
+#[tauri::command]
+fn get_binding_profile(binding: BindingType) -> BindingProfile {
+    print_calc::binding::binding_profile(binding)
+}
+
+#[tauri::command]
+fn get_duplex_plan(mode: DuplexMode, sheet_is_landscape: bool) -> DuplexPlan {
+    print_calc::duplex::duplex_plan(mode, sheet_is_landscape)
+}
+
+#[tauri::command]
+fn build_booklet_plan(
+    binding: BindingType,
+    source_pages: u32,
+    pages_per_side: u32,
+    duplex_mode: DuplexMode,
+    sheet_is_landscape: bool,
+    gsm: f64,
+) -> Result<BookletPlan, String> {
+    print_calc::plan::booklet_plan(
+        binding,
+        source_pages,
+        pages_per_side,
+        duplex_mode,
+        sheet_is_landscape,
+        gsm,
+    )
+}
+
+#[tauri::command]
+fn booklet_plan_spreads(plan: BookletPlan) -> Result<Vec<SheetSpread>, String> {
+    print_calc::plan::plan_spreads(&plan)
+}
+
+// ---------------------------------------------------------------------------
 // PDF foundation (Phase 1)
 // ---------------------------------------------------------------------------
 
@@ -190,6 +236,11 @@ pub fn run() {
             creep,
             effective_dpi,
             recommended_binding_margin_mm,
+            list_booklet_bindings,
+            get_binding_profile,
+            get_duplex_plan,
+            build_booklet_plan,
+            booklet_plan_spreads,
             inspect_pdf,
             preview_operations,
             export_pdf,

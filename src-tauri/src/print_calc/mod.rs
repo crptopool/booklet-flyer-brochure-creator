@@ -3,11 +3,14 @@
 //! Per the technical design principles, all page order and measurement
 //! maths is deterministic code — never language-model inference.
 
+pub mod binding;
 pub mod booklet;
 pub mod creep;
 pub mod dpi;
+pub mod duplex;
 pub mod geometry;
 pub mod imposition;
+pub mod plan;
 pub mod presets;
 pub mod scaling;
 pub mod signatures;

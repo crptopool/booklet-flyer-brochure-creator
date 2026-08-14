@@ -232,6 +232,120 @@ select {
   color: #aab;
 }
 
+/* Binding method chooser */
+.method-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0.8rem;
+  margin: 1rem 0;
+}
+
+.method-card {
+  background: white;
+  border: 2px solid #e2e4ee;
+  border-radius: 10px;
+  padding: 0.6rem 0.7rem 0.8rem;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.method-card:hover {
+  background: white;
+  border-color: #b9c4e4;
+}
+
+.method-card.selected {
+  border-color: #2c5fc4;
+  box-shadow: 0 0 0 3px rgba(44, 95, 196, 0.12);
+}
+
+.method-art {
+  background: #fafbff;
+  border: 1px solid #eef0f8;
+  border-radius: 6px;
+  padding: 0.2rem;
+}
+
+.method-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+  margin-top: 0.5rem;
+}
+
+.method-mech {
+  font-size: 0.78rem;
+  color: #667;
+  margin-top: 0.15rem;
+  line-height: 1.3;
+}
+
+/* Live configuration diagrams */
+.diagram-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0.9rem;
+  margin: 1rem 0;
+}
+
+.diagram {
+  background: white;
+  border: 1px solid #e2e4ee;
+  border-radius: 10px;
+  padding: 0.7rem 0.8rem 0.85rem;
+  margin: 0;
+}
+
+.diagram-title {
+  font-weight: 600;
+  font-size: 0.88rem;
+  margin-bottom: 0.4rem;
+}
+
+.diagram-caption {
+  font-size: 0.8rem;
+  color: #667;
+  line-height: 1.35;
+  margin: 0.4rem 0 0;
+}
+
+.manual-steps ol {
+  margin: 0.3rem 0 0;
+  padding-left: 1.2rem;
+  font-size: 0.82rem;
+  color: #445;
+  line-height: 1.45;
+}
+
+.spec-list {
+  list-style: none;
+  margin: 0.6rem 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 0.25rem 1rem;
+  font-size: 0.88rem;
+}
+
+.spec-list li {
+  padding: 0.15rem 0;
+  border-bottom: 1px solid #f0f2f8;
+}
+
+.spec-list strong {
+  color: #445;
+  font-weight: 600;
+  margin-right: 0.4rem;
+}
+
+.findings {
+  margin: 0.6rem 0 0;
+  padding-left: 1.2rem;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
 /* Preflight severities */
 .sev-info {
   color: #22662c;
