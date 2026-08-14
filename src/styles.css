@@ -770,6 +770,8 @@ button.ghost:hover {
   overflow: hidden;
   cursor: grab;
   position: relative;
+  user-select: none;
+  touch-action: none;
 }
 
 #sim-stage.panning {

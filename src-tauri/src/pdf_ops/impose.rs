@@ -48,7 +48,15 @@ pub struct MarkOptions {
     pub fold_marks: bool,
     pub sheet_labels: bool,
     /// Bleed in millimetres, written as the sheet's `/BleedBox`.
+    ///
+    /// Defaulted so a caller that omits it gets the recommended 3 mm
+    /// rather than a rejected request.
+    #[serde(default = "default_bleed_mm")]
     pub bleed_mm: f64,
+}
+
+fn default_bleed_mm() -> f64 {
+    3.0
 }
 
 impl Default for MarkOptions {
@@ -655,5 +663,38 @@ mod tests {
         // The far corner lands inside the cell bounds.
         assert!(cx >= -1e-9 && cx <= 200.0 + 1e-9);
         assert!(cy >= -1e-9 && cy <= 100.0 + 1e-9);
+    }
+}
+
+#[cfg(test)]
+mod mark_option_tests {
+    use super::*;
+
+    #[test]
+    fn bleed_defaults_when_a_caller_omits_it() {
+        // A payload from an older frontend must still deserialise.
+        let m: MarkOptions =
+            serde_json::from_str(r#"{"crop_marks":true,"fold_marks":true,"sheet_labels":true}"#).unwrap();
+        assert_eq!(m.bleed_mm, 3.0);
+        assert!(m.crop_marks);
+    }
+
+    #[test]
+    fn an_explicit_bleed_is_honoured() {
+        let m: MarkOptions = serde_json::from_str(
+            r#"{"crop_marks":false,"fold_marks":false,"sheet_labels":false,"bleed_mm":5}"#,
+        )
+        .unwrap();
+        assert_eq!(m.bleed_mm, 5.0);
+        assert!(!m.crop_marks);
+    }
+
+    #[test]
+    fn zero_bleed_is_distinguishable_from_omitted() {
+        let m: MarkOptions = serde_json::from_str(
+            r#"{"crop_marks":true,"fold_marks":true,"sheet_labels":true,"bleed_mm":0}"#,
+        )
+        .unwrap();
+        assert_eq!(m.bleed_mm, 0.0);
     }
 }
