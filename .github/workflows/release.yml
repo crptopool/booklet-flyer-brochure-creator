@@ -50,12 +50,12 @@ jobs:
           - platform: windows-latest
             label: Windows (.msi + .exe)
             args: ''
+          # One universal binary covers both Apple Silicon and Intel Macs.
+          # GitHub has retired the macos-13 Intel runners, so cross-compiling
+          # a universal target from the ARM runner is the supported route.
           - platform: macos-latest
-            label: macOS Apple Silicon (.dmg)
-            args: '--target aarch64-apple-darwin'
-          - platform: macos-13
-            label: macOS Intel (.dmg)
-            args: '--target x86_64-apple-darwin'
+            label: macOS Universal (.dmg)
+            args: '--target universal-apple-darwin'
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -97,7 +97,7 @@ jobs:
             Download the installer for your platform from the assets below.
 
             - **Windows** — `.msi` or `.exe` (NSIS)
-            - **macOS** — `.dmg` (pick the Apple Silicon or Intel build)
+            - **macOS** — `.dmg` (universal: Apple Silicon and Intel)
             - **Linux** — `.AppImage` (run directly) or `.deb`
 
             Builds are unsigned, so the OS will warn on first launch:
