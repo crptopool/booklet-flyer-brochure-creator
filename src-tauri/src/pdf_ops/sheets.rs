@@ -229,3 +229,196 @@ mod tests {
         assert!(sheets_for_plan(&plan, A5, A4).is_err());
     }
 }
+
+/// Sheet sides for one signature of a large book.
+///
+/// Each signature is imposed as its own saddle-stitched booklet, using
+/// the signature's own page range. Sheet numbers restart at 1 within the
+/// signature so the labels match the physical stack.
+pub fn sheets_for_signature(
+    signature: &crate::print_calc::signatures::Signature,
+    source_pages: u32,
+    trim_mm: (f64, f64),
+    sheet_mm: (f64, f64),
+    back_rotation: i64,
+) -> Result<Vec<SheetSide>, String> {
+    let count = signature.page_count();
+    let spreads = saddle_stitch_order(count)?;
+    let cell_w = mm_to_points(trim_mm.0);
+    let cell_h = mm_to_points(trim_mm.1);
+    let sheet_w = mm_to_points(sheet_mm.0);
+    let sheet_h = mm_to_points(sheet_mm.1);
+
+    // Map a position inside the signature to a real source page.
+    let absolute = |local: Option<u32>| -> Option<u32> {
+        let n = local? + signature.first_page - 1;
+        if n <= source_pages {
+            Some(n)
+        } else {
+            None
+        }
+    };
+
+    let mut out = Vec::with_capacity(spreads.len() * 2);
+    for s in spreads {
+        for (side_name, pair) in [("front", s.front), ("back", s.back)] {
+            let cells = vec![absolute(pair.0), absolute(pair.1)];
+            let layout = grid_placements(
+                &cells, 1, 2, sheet_w, sheet_h, cell_w, cell_h, 0.0, s.sheet_number, side_name,
+            )?;
+            let rotation = if side_name == "back" { back_rotation } else { 0 };
+            let offset_x = (sheet_w - 2.0 * cell_w) / 2.0;
+            out.push(SheetSide {
+                sheet_number: s.sheet_number,
+                side: side_name.to_string(),
+                width: sheet_w,
+                height: sheet_h,
+                placements: layout.cells.iter().map(|c| Placement::from_cell(c, rotation)).collect(),
+                fold_x: vec![offset_x + cell_w],
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// Sheet sides that repeat one page to fill each sheet.
+///
+/// Used for business cards, labels and flyers: the same artwork is
+/// stepped across the sheet as many times as fits.
+pub fn sheets_for_step_and_repeat(
+    page: u32,
+    copies: u32,
+    rows: u32,
+    cols: u32,
+    trim_mm: (f64, f64),
+    sheet_mm: (f64, f64),
+    spacing_mm: f64,
+) -> Result<Vec<SheetSide>, String> {
+    if page == 0 || copies == 0 || rows == 0 || cols == 0 {
+        return Err("page, copies, rows and columns must all be positive".into());
+    }
+    let per_sheet = rows * cols;
+    let sheets = copies.div_ceil(per_sheet);
+    let cell_w = mm_to_points(trim_mm.0);
+    let cell_h = mm_to_points(trim_mm.1);
+    let sheet_w = mm_to_points(sheet_mm.0);
+    let sheet_h = mm_to_points(sheet_mm.1);
+    let spacing = mm_to_points(spacing_mm.max(0.0));
+
+    let mut out = Vec::with_capacity(sheets as usize);
+    let mut remaining = copies;
+    for n in 1..=sheets {
+        // The last sheet carries only the copies still owed.
+        let on_this_sheet = remaining.min(per_sheet);
+        remaining -= on_this_sheet;
+        let cells: Vec<Option<u32>> = (0..per_sheet)
+            .map(|i| if i < on_this_sheet { Some(page) } else { None })
+            .collect();
+        let layout = grid_placements(
+            &cells, rows, cols, sheet_w, sheet_h, cell_w, cell_h, spacing, n, "front",
+        )?;
+        out.push(SheetSide {
+            sheet_number: n,
+            side: "front".to_string(),
+            width: sheet_w,
+            height: sheet_h,
+            placements: layout.cells.iter().map(|c| Placement::from_cell(c, 0)).collect(),
+            fold_x: vec![],
+        });
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod extra_tests {
+    use super::*;
+    use crate::print_calc::signatures::divide_into_signatures;
+
+    const A5: (f64, f64) = (148.0, 210.0);
+    const A4_LANDSCAPE: (f64, f64) = (297.0, 210.0);
+    /// A6 fed rotated, which is how 8 fit on an A3 sheet: 2 across
+    /// (2 x 148 = 296 mm) by 4 down (4 x 105 = 420 mm).
+    const A6_ROTATED: (f64, f64) = (148.0, 105.0);
+    const A6: (f64, f64) = (105.0, 148.0);
+    const A3: (f64, f64) = (297.0, 420.0);
+
+    #[test]
+    fn each_signature_is_imposed_as_its_own_booklet() {
+        // 40 pages in 16-page signatures: 16, 16, 8 (padded to 16).
+        let sigs = divide_into_signatures(40, 16).unwrap();
+        assert_eq!(sigs.len(), 3);
+        let sides = sheets_for_signature(&sigs[0], 40, A5, A4_LANDSCAPE, 0).unwrap();
+        // 16 pages -> 4 sheets -> 8 sides.
+        assert_eq!(sides.len(), 8);
+        let first: Vec<_> = sides[0].placements.iter().map(|p| p.page).collect();
+        assert_eq!(first, vec![Some(16), Some(1)]);
+    }
+
+    #[test]
+    fn later_signatures_carry_their_own_page_range() {
+        let sigs = divide_into_signatures(40, 16).unwrap();
+        let sides = sheets_for_signature(&sigs[1], 40, A5, A4_LANDSCAPE, 0).unwrap();
+        // Signature 2 starts at page 17 and ends at 32.
+        let first: Vec<_> = sides[0].placements.iter().map(|p| p.page).collect();
+        assert_eq!(first, vec![Some(32), Some(17)]);
+    }
+
+    #[test]
+    fn padding_in_the_final_signature_becomes_blanks() {
+        let sigs = divide_into_signatures(40, 16).unwrap();
+        let sides = sheets_for_signature(&sigs[2], 40, A5, A4_LANDSCAPE, 0).unwrap();
+        let pages: Vec<u32> = sides
+            .iter()
+            .flat_map(|s| s.placements.iter().filter_map(|p| p.page))
+            .collect();
+        // Only pages 33..=40 exist; the rest of the signature is blank.
+        assert_eq!(pages.len(), 8);
+        assert!(pages.iter().all(|p| (33..=40).contains(p)));
+    }
+
+    #[test]
+    fn signature_backs_carry_the_duplex_rotation() {
+        let sigs = divide_into_signatures(16, 16).unwrap();
+        let sides = sheets_for_signature(&sigs[0], 16, A5, A4_LANDSCAPE, 180).unwrap();
+        assert_eq!(sides[0].placements[0].rotation, 0);
+        assert_eq!(sides[1].placements[0].rotation, 180);
+    }
+
+    #[test]
+    fn step_and_repeat_fills_whole_sheets() {
+        // Scenario C: A6 flyers on A3, rotated, 4 rows x 2 cols = 8 per sheet.
+        let sides = sheets_for_step_and_repeat(1, 100, 4, 2, A6_ROTATED, A3, 0.0).unwrap();
+        assert_eq!(sides.len(), 13);
+        assert_eq!(sides[0].placements.len(), 8);
+        assert!(sides[0].placements.iter().all(|p| p.page == Some(1)));
+    }
+
+    #[test]
+    fn the_last_sheet_only_carries_the_copies_still_owed() {
+        // 10 copies at 8 per sheet leaves 2 on the second sheet.
+        let sides = sheets_for_step_and_repeat(1, 10, 4, 2, A6_ROTATED, A3, 0.0).unwrap();
+        assert_eq!(sides.len(), 2);
+        let filled = sides[1].placements.iter().filter(|p| p.page.is_some()).count();
+        assert_eq!(filled, 2);
+    }
+
+    #[test]
+    fn step_and_repeat_rejects_a_grid_that_does_not_fit() {
+        // Upright A6 stacks four deep to 592 mm, past an A3 sheet.
+        assert!(sheets_for_step_and_repeat(1, 10, 4, 2, A6, A3, 0.0).is_err());
+        assert!(sheets_for_step_and_repeat(1, 10, 9, 9, A6, A3, 0.0).is_err());
+    }
+
+    #[test]
+    fn upright_a6_still_fits_four_to_an_a3_sheet() {
+        let sides = sheets_for_step_and_repeat(1, 4, 2, 2, A6, A3, 0.0).unwrap();
+        assert_eq!(sides.len(), 1);
+        assert_eq!(sides[0].placements.len(), 4);
+    }
+
+    #[test]
+    fn step_and_repeat_rejects_zero_inputs() {
+        assert!(sheets_for_step_and_repeat(0, 10, 2, 2, A6, A3, 0.0).is_err());
+        assert!(sheets_for_step_and_repeat(1, 0, 2, 2, A6, A3, 0.0).is_err());
+    }
+}

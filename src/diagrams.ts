@@ -9,11 +9,11 @@
  */
 
 const INK = "#1a1a2e";
-const MUTED = "#7c85a3";
+const MUTED = "#5b6480";
 const ACCENT = "#2c5fc4";
 const PAPER = "#ffffff";
 const PAGE_FILL = "#eef1fa";
-const PAGE_EDGE = "#ccd5ee";
+const PAGE_EDGE = "#b9c6e8";
 const METAL = "#8894b0";
 const GLUE = "#c8873f";
 const BOARD = "#3d4663";

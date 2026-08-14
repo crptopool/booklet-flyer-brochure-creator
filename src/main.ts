@@ -643,6 +643,42 @@ let readingOrder: (number | null)[] = [];
 let simView: "bound" | "sheets" = "bound";
 /** Guards against a slow paint overwriting a newer one. */
 let simToken = 0;
+let simZoom = 1;
+let simPanX = 0;
+let simPanY = 0;
+
+/** Wrap whatever is on the stage so it can be zoomed and panned. */
+function applySimTransform() {
+  const layer = el<HTMLDivElement>("sim-stage").querySelector<HTMLElement>(".zoom-layer");
+  if (layer) {
+    layer.style.transform = `translate(${simPanX}px, ${simPanY}px) scale(${simZoom})`;
+  }
+  el<HTMLSpanElement>("sim-zoom-label").textContent = `${Math.round(simZoom * 100)}%`;
+}
+
+function setSimZoom(next: number) {
+  simZoom = Math.min(6, Math.max(0.25, next));
+  applySimTransform();
+}
+
+function resetSimView() {
+  simZoom = 1;
+  simPanX = 0;
+  simPanY = 0;
+  applySimTransform();
+}
+
+/** Put the stage's content inside a transformable layer. */
+function wrapStage(content: Node | string) {
+  const stage = el<HTMLDivElement>("sim-stage");
+  stage.innerHTML = "";
+  const layer = document.createElement("div");
+  layer.className = "zoom-layer";
+  if (typeof content === "string") layer.innerHTML = content;
+  else layer.appendChild(content);
+  stage.appendChild(layer);
+  applySimTransform();
+}
 let simIndex = 0;
 /** Set when the sheets could not be built — export is then refused too. */
 let sheetError = "";
@@ -705,28 +741,26 @@ function spreadCount(): number {
 }
 
 function renderSimulation() {
-  const stage = el<HTMLDivElement>("sim-stage");
   const pos = el<HTMLSpanElement>("sim-pos");
   if (!currentPlan) return;
 
   if (simView === "sheets") {
     if (sheetError) {
-      stage.innerHTML = `<p class="sev-warning">${escapeHtml(sheetError)}</p>`;
+      wrapStage(`<p class="sev-warning">${escapeHtml(sheetError)}</p>`);
       pos.textContent = "";
       return;
     }
     const total = currentSheets.length;
     simIndex = Math.min(simIndex, total - 1);
     const side = currentSheets[simIndex];
-    stage.innerHTML = sheetSideDiagram(side, el<HTMLInputElement>("sim-marks").checked);
+    wrapStage(sheetSideDiagram(side, el<HTMLInputElement>("sim-marks").checked));
     pos.textContent = `Sheet side ${simIndex + 1} of ${total}`;
     // Swap in the artwork-composited canvas once it is ready.
     const token = ++simToken;
     paintSheet(side, el<HTMLInputElement>("sim-marks").checked)
       .then((c) => {
         if (token !== simToken) return;
-        stage.innerHTML = "";
-        stage.appendChild(c);
+        wrapStage(c);
       })
       .catch(() => {
         /* the schematic already rendered */
@@ -737,7 +771,7 @@ function renderSimulation() {
   const total = spreadCount();
   simIndex = Math.min(simIndex, total - 1);
   const s = spreadAt(simIndex);
-  stage.innerHTML = boundSpreadDiagram(
+  wrapStage(boundSpreadDiagram(
     currentPlan.profile.key,
     s.left,
     s.right,
@@ -745,7 +779,7 @@ function renderSimulation() {
     s.rightPos,
     Number(el<HTMLInputElement>("bk-margin").value) || 0,
     el<HTMLSelectElement>("bk-side").value || "left"
-  );
+  ));
   pos.textContent = `Spread ${simIndex + 1} of ${total} · ${readingOrder.length} bound pages`;
 
   const token = ++simToken;
@@ -757,8 +791,7 @@ function renderSimulation() {
   )
     .then((c) => {
       if (token !== simToken) return;
-      stage.innerHTML = "";
-      stage.appendChild(c);
+      wrapStage(c);
     })
     .catch(() => {
       /* the schematic already rendered */
@@ -777,11 +810,47 @@ document.querySelectorAll<HTMLButtonElement>("#sim-tabs .seg-btn").forEach((btn)
 
 el<HTMLButtonElement>("sim-prev").addEventListener("click", () => {
   simIndex = Math.max(0, simIndex - 1);
+  resetSimView();
   renderSimulation();
 });
+
+el<HTMLButtonElement>("sim-zoom-in").addEventListener("click", () => setSimZoom(simZoom * 1.25));
+el<HTMLButtonElement>("sim-zoom-out").addEventListener("click", () => setSimZoom(simZoom / 1.25));
+el<HTMLButtonElement>("sim-zoom-reset").addEventListener("click", resetSimView);
+
+// Scroll to zoom, drag to pan.
+el<HTMLDivElement>("sim-stage").addEventListener("wheel", (e) => {
+  e.preventDefault();
+  setSimZoom(simZoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12));
+}, { passive: false });
+
+let panning = false;
+let panStartX = 0;
+let panStartY = 0;
+const stageEl = el<HTMLDivElement>("sim-stage");
+stageEl.addEventListener("pointerdown", (e) => {
+  panning = true;
+  panStartX = e.clientX - simPanX;
+  panStartY = e.clientY - simPanY;
+  stageEl.classList.add("panning");
+  stageEl.setPointerCapture(e.pointerId);
+});
+stageEl.addEventListener("pointermove", (e) => {
+  if (!panning) return;
+  simPanX = e.clientX - panStartX;
+  simPanY = e.clientY - panStartY;
+  applySimTransform();
+});
+for (const ev of ["pointerup", "pointercancel"]) {
+  stageEl.addEventListener(ev, () => {
+    panning = false;
+    stageEl.classList.remove("panning");
+  });
+}
 el<HTMLButtonElement>("sim-next").addEventListener("click", () => {
   const total = simView === "sheets" ? currentSheets.length : spreadCount();
   simIndex = Math.min(total - 1, simIndex + 1);
+  resetSimView();
   renderSimulation();
 });
 el<HTMLInputElement>("sim-marks").addEventListener("change", renderSimulation);
@@ -1391,5 +1460,336 @@ async function initExtras() {
 }
 
 initExtras().catch(() => {
+  /* outside Tauri the invoke calls are unavailable */
+});
+
+// ---------------------------------------------------------------------------
+// Projects (§29) — settings are saved so an output can be reproduced exactly
+// ---------------------------------------------------------------------------
+
+interface BookletSettings {
+  binding: string;
+  page_count: number;
+  pages_per_side: number;
+  duplex: string;
+  sheet_is_landscape: boolean;
+  gsm: number;
+  trim_size: string;
+  sheet_size: string;
+  binding_side: string;
+  binding_margin_mm: number;
+}
+
+interface Project {
+  version: number;
+  name: string;
+  source_path: string | null;
+  operations: Operation[];
+  booklet: BookletSettings;
+  marks: { crop_marks: boolean; fold_marks: boolean; sheet_labels: boolean; bleed_mm: number };
+  cover: CoverInputs | null;
+  printer_profile: PrinterProfile | null;
+  notes: string;
+}
+
+let projectPath: string | null = null;
+
+function markOptions() {
+  const on = el<HTMLInputElement>("sim-marks")?.checked ?? true;
+  return { crop_marks: on, fold_marks: on, sheet_labels: on, bleed_mm: numVal("cv-bleed") || 3 };
+}
+
+/** Gather the whole application state into a project. */
+function collectProject(name: string): Project {
+  return {
+    version: 1,
+    name,
+    source_path: source?.path ?? null,
+    operations,
+    booklet: {
+      binding: selectedBinding,
+      page_count: Number(el<HTMLInputElement>("bk-pages").value) || 1,
+      pages_per_side: Number(el<HTMLSelectElement>("bk-per-side").value) || 2,
+      duplex: duplexMode(),
+      sheet_is_landscape: isLandscape(),
+      gsm: numVal("bk-gsm") || 80,
+      trim_size: el<HTMLSelectElement>("bk-trim").value,
+      sheet_size: el<HTMLSelectElement>("bk-sheet").value,
+      binding_side: el<HTMLSelectElement>("bk-side").value || "left",
+      binding_margin_mm: numVal("bk-margin"),
+    },
+    marks: markOptions(),
+    cover: collectCoverInputs(),
+    printer_profile: profiles.length ? readProfileForm() : null,
+    notes: "",
+  };
+}
+
+/** Push a loaded project back into every screen. */
+async function applyProject(p: Project) {
+  const b = p.booklet;
+  selectedBinding = b.binding;
+  marginOverridden = true; // the saved margin wins over the method default
+  el<HTMLInputElement>("bk-pages").value = String(b.page_count);
+  el<HTMLSelectElement>("bk-per-side").value = String(b.pages_per_side);
+  el<HTMLSelectElement>("bk-sides").value = b.duplex === "simplex" ? "single" : "double";
+  if (b.duplex !== "simplex") el<HTMLSelectElement>("bk-flip").value = b.duplex;
+  el<HTMLSelectElement>("bk-orientation").value = b.sheet_is_landscape ? "landscape" : "portrait";
+  el<HTMLInputElement>("bk-gsm").value = String(b.gsm);
+  el<HTMLSelectElement>("bk-trim").value = b.trim_size;
+  el<HTMLSelectElement>("bk-sheet").value = b.sheet_size;
+  el<HTMLInputElement>("bk-margin").value = String(b.binding_margin_mm);
+
+  operations = p.operations ?? [];
+
+  if (p.cover) {
+    el<HTMLSelectElement>("cv-kind").value = p.cover.kind;
+    el<HTMLInputElement>("cv-trim-w").value = String(p.cover.trim_width_mm);
+    el<HTMLInputElement>("cv-trim-h").value = String(p.cover.trim_height_mm);
+    el<HTMLInputElement>("cv-pages").value = String(p.cover.page_count);
+    el<HTMLInputElement>("cv-caliper").value = String(p.cover.caliper_mm);
+    el<HTMLInputElement>("cv-bleed").value = String(p.cover.bleed_mm);
+    el<HTMLInputElement>("cv-safe").value = String(p.cover.safe_margin_mm);
+  }
+
+  await renderBindingMethods();
+  el<HTMLSelectElement>("bk-side").value = b.binding_side;
+  await refreshCover();
+  el<HTMLDivElement>("project-name").textContent = p.name;
+}
+
+el<HTMLButtonElement>("btn-proj-new").addEventListener("click", async () => {
+  try {
+    const fresh = await invoke<Project>("new_project");
+    projectPath = null;
+    source = null;
+    unloadPdf();
+    el<HTMLSpanElement>("pdf-name").textContent = "";
+    el<HTMLDivElement>("pdf-info").classList.add("hidden");
+    el<HTMLDivElement>("pdf-pages").innerHTML = "";
+    el<HTMLElement>("sim-section").classList.add("hidden");
+    await applyProject(fresh);
+  } catch (e) {
+    showError(e);
+  }
+});
+
+el<HTMLButtonElement>("btn-proj-open").addEventListener("click", async () => {
+  try {
+    const picked = await open({ filters: [{ name: "PrintPrep project", extensions: ["ppproj", "json"] }], multiple: false });
+    if (!picked) return;
+    const [p, sourcePresent] = await invoke<[Project, boolean]>("load_project", { path: String(picked) });
+    projectPath = String(picked);
+    await applyProject(p);
+
+    // Re-open the source so page operations and previews work again.
+    if (p.source_path && sourcePresent) {
+      source = await invoke<PdfSource>("inspect_pdf", { path: p.source_path });
+      el<HTMLSpanElement>("pdf-name").textContent = p.source_path;
+      el<HTMLDivElement>("pdf-info").classList.remove("hidden");
+      el<HTMLDivElement>("pdf-info").innerHTML = `<p><strong>${source.page_count}</strong> pages restored from the project.</p>`;
+      el<HTMLDivElement>("pdf-actions").classList.remove("hidden");
+      try {
+        await loadDocument(p.source_path);
+      } catch {
+        unloadPdf();
+      }
+      await refreshPages();
+    } else if (p.source_path) {
+      alert(`The project opened, but its source PDF is missing:\n${p.source_path}\n\nSettings were restored — re-import the file to export again.`);
+    }
+  } catch (e) {
+    showError(e);
+  }
+});
+
+el<HTMLButtonElement>("btn-proj-save").addEventListener("click", async () => {
+  try {
+    const target = projectPath ?? (await save({
+      filters: [{ name: "PrintPrep project", extensions: ["ppproj"] }],
+      defaultPath: "project.ppproj",
+    }));
+    if (!target) return;
+    projectPath = String(target);
+    const name = projectPath.split(/[/\\]/).pop()!.replace(/\.(ppproj|json)$/, "");
+    await invoke("save_project", { project: collectProject(name), path: projectPath });
+    el<HTMLDivElement>("project-name").textContent = name;
+  } catch (e) {
+    showError(e);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Image resolution and colour checks (§7, §24, §27)
+// ---------------------------------------------------------------------------
+
+interface ColorUsage {
+  device_rgb: boolean;
+  device_cmyk: boolean;
+  device_gray: boolean;
+  icc_based: boolean;
+  separation: boolean;
+  spot_names: string[];
+}
+
+function showQuality(title: string, findings: Finding[], extra = "") {
+  const box = el<HTMLDivElement>("pdf-quality");
+  box.classList.remove("hidden");
+  box.innerHTML =
+    `<h3 style="margin-top:0">${escapeHtml(title)}</h3>${extra}` +
+    `<ul class="findings">${findings
+      .map((f) => `<li class="sev-${escapeHtml(f.severity.toLowerCase())}"><strong>${escapeHtml(f.severity)}</strong> ${escapeHtml(f.message)}</li>`)
+      .join("")}</ul>`;
+}
+
+el<HTMLButtonElement>("btn-check-dpi").addEventListener("click", async () => {
+  if (!source) return showError("Import a PDF first.");
+  try {
+    const findings = await invoke<Finding[]>("preflight_images", { path: source.path, minimumDpi: null });
+    const images = await invoke<
+      { page: number; pixel_width: number; pixel_height: number; effective_dpi: number }[]
+    >("scan_image_resolution", { path: source.path });
+    const table = images.length
+      ? `<p class="hint">${images.length} image(s) scanned. Lowest effective resolution:
+         <strong>${Math.min(...images.map((i) => i.effective_dpi)).toFixed(0)} DPI</strong>.</p>`
+      : "";
+    showQuality("Image resolution", findings, table);
+  } catch (e) {
+    showError(e);
+  }
+});
+
+el<HTMLButtonElement>("btn-check-colour").addEventListener("click", async () => {
+  if (!source) return showError("Import a PDF first.");
+  try {
+    const [usage, findings] = await invoke<[ColorUsage, Finding[]]>("scan_color_usage", {
+      path: source.path,
+      commercialPrint: el<HTMLInputElement>("colour-commercial").checked,
+    });
+    const spots = usage.spot_names.length
+      ? `<p class="hint">Spot colourants: ${escapeHtml(usage.spot_names.join(", "))}</p>`
+      : "";
+    showQuality("Colour spaces", findings, spots);
+  } catch (e) {
+    showError(e);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Signature and step-and-repeat export (§22 modes 5 and 7)
+// ---------------------------------------------------------------------------
+
+interface Signature {
+  number: number;
+  first_page: number;
+  last_page: number;
+  blank_pages: number;
+}
+
+async function nupSizes(): Promise<{ trim: [number, number]; sheet: [number, number] }> {
+  const sizes = await invoke<PaperSize[]>("list_paper_sizes");
+  const find = (n: string) => sizes.find((s) => s.name === n) ?? sizes[1];
+  const trim = find(el<HTMLSelectElement>("nup-trim").value);
+  const sheet = find(el<HTMLSelectElement>("nup-sheet").value);
+  const landscape = el<HTMLSelectElement>("nup-orient").value === "landscape";
+  return {
+    trim: [trim.width_mm, trim.height_mm],
+    sheet: landscape ? [sheet.height_mm, sheet.width_mm] : [sheet.width_mm, sheet.height_mm],
+  };
+}
+
+function showExportResult(html: string) {
+  const box = el<HTMLDivElement>("nup-export-result");
+  box.classList.remove("hidden");
+  box.innerHTML = html;
+}
+
+el<HTMLButtonElement>("btn-nup-export").addEventListener("click", async () => {
+  if (!source) return showError("Import a PDF on the Import & Pages screen first.");
+  try {
+    const out = await save({ filters: [{ name: "PDF", extensions: ["pdf"] }], defaultPath: "step-and-repeat.pdf" });
+    if (!out) return;
+    const { trim, sheet } = await nupSizes();
+    const sheets = await invoke<number>("export_step_and_repeat_pdf", {
+      sourcePath: source.path,
+      page: Number(el<HTMLInputElement>("nup-repeat-page").value) || 1,
+      copies: Number(el<HTMLInputElement>("nup-pages").value) || 1,
+      rows: Number(el<HTMLInputElement>("nup-rows").value) || 1,
+      cols: Number(el<HTMLInputElement>("nup-cols").value) || 1,
+      trimMm: trim,
+      sheetMm: sheet,
+      spacingMm: numVal("nup-spacing"),
+      outputPath: out,
+      marks: markOptions(),
+    });
+    showExportResult(`<p class="sev-info">✓ Wrote <strong>${sheets}</strong> sheet(s) to <code>${escapeHtml(out)}</code>.</p>`);
+  } catch (e) {
+    showError(e);
+  }
+});
+
+el<HTMLButtonElement>("btn-sig-plan").addEventListener("click", async () => {
+  try {
+    const pages = Number(el<HTMLInputElement>("nup-pages").value) || 1;
+    const sigs = await invoke<Signature[]>("divide_signatures", {
+      pageCount: pages,
+      signatureSize: Number(el<HTMLSelectElement>("sig-size").value),
+      balanced: el<HTMLSelectElement>("sig-balanced").value === "true",
+    });
+    showExportResult(
+      `<p><strong>${sigs.length}</strong> signature(s) for ${pages} pages.</p>` +
+        `<ul class="findings">${sigs
+          .map((s) => `<li>Signature ${s.number}: pages ${s.first_page}–${s.last_page}` +
+            (s.blank_pages ? ` <span class="sev-warning">(${s.blank_pages} blank)</span>` : "") + "</li>")
+          .join("")}</ul>`
+    );
+  } catch (e) {
+    showError(e);
+  }
+});
+
+el<HTMLButtonElement>("btn-sig-export").addEventListener("click", async () => {
+  if (!source) return showError("Import a PDF on the Import & Pages screen first.");
+  try {
+    const out = await save({ filters: [{ name: "PDF", extensions: ["pdf"] }], defaultPath: "signatures.pdf" });
+    if (!out) return;
+    const { trim, sheet } = await nupSizes();
+    // Back sides need the rotation the chosen flip demands.
+    const flip = await invoke<DuplexPlan>("get_duplex_plan", {
+      mode: "short_edge",
+      sheetIsLandscape: el<HTMLSelectElement>("nup-orient").value === "landscape",
+    });
+    const written = await invoke<string[]>("export_signature_pdfs", {
+      sourcePath: source.path,
+      pageCount: Number(el<HTMLInputElement>("nup-pages").value) || 1,
+      signatureSize: Number(el<HTMLSelectElement>("sig-size").value),
+      balanced: el<HTMLSelectElement>("sig-balanced").value === "true",
+      trimMm: trim,
+      sheetMm: sheet,
+      backRotation: flip.back_side_rotation,
+      outputPath: out,
+      combined: el<HTMLSelectElement>("sig-combined").value === "true",
+      marks: markOptions(),
+    });
+    showExportResult(
+      `<p class="sev-info">✓ Wrote ${written.length} file(s):</p><ul class="findings">${written
+        .map((w) => `<li><code>${escapeHtml(w)}</code></li>`)
+        .join("")}</ul>`
+    );
+  } catch (e) {
+    showError(e);
+  }
+});
+
+async function initNupSizes() {
+  const sizes = await invoke<PaperSize[]>("list_paper_sizes");
+  const opts = sizes.map((s) => `<option value="${s.name}">${s.name}</option>`).join("");
+  el<HTMLSelectElement>("nup-trim").innerHTML = opts;
+  el<HTMLSelectElement>("nup-sheet").innerHTML = opts;
+  el<HTMLSelectElement>("nup-trim").value = "A6";
+  el<HTMLSelectElement>("nup-sheet").value = "A3";
+}
+
+initNupSizes().catch(() => {
   /* outside Tauri the invoke calls are unavailable */
 });

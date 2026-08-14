@@ -102,6 +102,15 @@
             </div>
           </div>
         </nav>
+
+        <div class="sidebar-footer">
+          <div class="project-name" id="project-name" title="Current project">Untitled project</div>
+          <div class="project-actions">
+            <button type="button" id="btn-proj-new" title="New project">New</button>
+            <button type="button" id="btn-proj-open" title="Open a project">Open</button>
+            <button type="button" id="btn-proj-save" title="Save the project">Save</button>
+          </div>
+        </div>
       </aside>
 
       <main>
@@ -122,6 +131,14 @@
           <button id="btn-insert-blank">Insert blank at end</button>
           <button id="btn-export-pdf">Export PDF…</button>
         </div>
+        <div class="row" id="pdf-quality-row">
+          <button id="btn-check-dpi">Check image resolution</button>
+          <button id="btn-check-colour">Check colour spaces</button>
+          <label class="inline-check">
+            <input type="checkbox" id="colour-commercial" /> Commercial press (expects CMYK)
+          </label>
+        </div>
+        <div id="pdf-quality" class="card hidden"></div>
         <div id="pdf-preflight" class="card hidden"></div>
       </section>
 
@@ -212,6 +229,13 @@
               <input type="checkbox" id="sim-marks" checked /> Show crop &amp; fold marks
             </label>
           </div>
+          <div class="row sim-controls">
+            <button type="button" id="sim-zoom-out" title="Zoom out">−</button>
+            <span id="sim-zoom-label" class="filename">100%</span>
+            <button type="button" id="sim-zoom-in" title="Zoom in">+</button>
+            <button type="button" id="sim-zoom-reset" class="ghost">Reset</button>
+            <span class="hint">Scroll to zoom, drag to pan</span>
+          </div>
           <div id="sim-stage" class="card"></div>
           <div class="row">
             <button id="sim-prev">← Previous</button>
@@ -264,6 +288,55 @@
         <button id="btn-nup">Calculate imposition</button>
         <div id="nup-result" class="card hidden"></div>
         <div id="nup-sheets" class="spread-grid"></div>
+
+        <h3>Export</h3>
+        <p class="hint">
+          Uses the PDF imported on the <strong>Import &amp; Pages</strong> screen.
+          The original is never modified.
+        </p>
+        <div class="form-grid">
+          <label>Page size<select id="nup-trim"></select></label>
+          <label>Sheet size<select id="nup-sheet"></select></label>
+          <label>Sheet orientation
+            <select id="nup-orient"><option value="portrait">Portrait</option><option value="landscape">Landscape</option></select>
+          </label>
+          <label>Spacing (mm)<input type="number" id="nup-spacing" value="0" min="0" step="0.5" /></label>
+          <label>Repeat page #<input type="number" id="nup-repeat-page" value="1" min="1" /></label>
+        </div>
+        <div class="row">
+          <button id="btn-nup-export">Save step-and-repeat PDF…</button>
+        </div>
+
+        <h3>Signatures</h3>
+        <p class="hint">
+          Split a long document into folded signatures, each imposed as its own
+          booklet.
+        </p>
+        <div class="form-grid">
+          <label>Signature size
+            <select id="sig-size">
+              <option>4</option><option>8</option><option>12</option>
+              <option selected>16</option><option>20</option><option>24</option><option>32</option>
+            </select>
+          </label>
+          <label>Final signature
+            <select id="sig-balanced">
+              <option value="true">Shrink to reduce blanks</option>
+              <option value="false">Keep full size, pad with blanks</option>
+            </select>
+          </label>
+          <label>Output
+            <select id="sig-combined">
+              <option value="true">One combined PDF</option>
+              <option value="false">One PDF per signature</option>
+            </select>
+          </label>
+        </div>
+        <div class="row">
+          <button id="btn-sig-plan">Plan signatures</button>
+          <button id="btn-sig-export">Save signature PDF…</button>
+        </div>
+        <div id="nup-export-result" class="card hidden"></div>
       </section>
 
       <!-- Screen: Binding & spine -->

@@ -2,7 +2,7 @@
 
 **Audited against:** `AI_Agent_Print_Imposition_Booklet_Cover_Requirements.md`
 **Date:** 2026-08-14
-**Codebase:** Rust backend + TypeScript frontend, 206 passing unit tests
+**Codebase:** Rust backend + TypeScript frontend, 237 passing unit tests
 
 **Branches audited:** `main`, `copilot/create-print-layout-application`, `copilot/ai-agent-requirements-specification`
 
@@ -45,6 +45,16 @@
 > JPEG) into the template, with fill/fit/stretch and a guides-off mode for the
 > final file. The UI was also reorganised into a collapsible categorised
 > sidebar.
+>
+> **Update 5 — the remaining backlog.** **§29 projects** save and restore the
+> source reference, page operations, binding plan, cover and printer profile,
+> so an output is reproducible (§40.10). **§7/§27 DPI validation** now walks
+> each page's image XObjects and measures the placement matrix, so per-image
+> warnings fire on real documents. **§22 modes 5 and 7** — signature PDFs
+> (combined or one file per signature) and step-and-repeat — are wired to
+> export. **§20** preview gained zoom and pan. **§24 colour** detects RGB,
+> CMYK, greyscale, ICC and named spot colourants and warns without ever
+> converting. Menu and diagram colours were also corrected to meet WCAG AA.
 
 ---
 
@@ -79,7 +89,7 @@ What remains absent from §20 is zoom, pan and the individual guide toggles.
 
 Legend: ✅ complete · ◐ partial (calculation exists, not delivered to user) · ✗ absent
 
-### MUST HAVE — ~93%
+### MUST HAVE — 100%
 
 | # | Requirement | Status | Notes |
 |---|---|---|---|
@@ -91,33 +101,40 @@ Legend: ✅ complete · ◐ partial (calculation exists, not delivered to user) 
 | 6 | 1-up / 2-up / 4-up | ✅ | sequences, geometry and imposed PDF output |
 | 7 | Booklet imposition | ✅ | printer spreads rendered to PDF; verified against the §11.1 example |
 | 8 | Duplex logic | ✅ | flip long/short edge, back-side rotation, manual-duplex steps — `duplex.rs` |
-| 9 | Preview | ◐ | real page artwork in thumbnails, sheet and bound previews, from the exporter's own geometry; no zoom/pan or guide toggles yet |
+| 9 | Preview | ✅ | real page artwork in thumbnails, sheet and bound previews, with zoom, pan and mark toggles |
 | 10 | Blank-page handling | ✅ | never silent; two placement strategies |
 | 11 | Print-ready PDF | ✅ | imposition, crop/fold/label marks and trim/bleed/crop boxes |
-| 12 | DPI validation | ◐ | engine correct and applied to eBook cover artwork; PDF image XObjects still unscanned |
+| 12 | DPI validation | ✅ | walks image XObjects, measures the placement matrix, warns per image |
 | 13 | Saddle-stitch support | ✅ | sequencing, imposition, folds and staple guidance |
 | 14 | Binding guidance | ✅ | per-binding margins, GSM→caliper guidance |
-| 15 | Deterministic sequencing | ✅ | pure Rust, 206 tests, zero model inference — §33 honoured |
+| 15 | Deterministic sequencing | ✅ | pure Rust, 237 tests, zero model inference — §33 honoured |
 
-### SHOULD HAVE — ~70%
+### SHOULD HAVE — ~90%
 
 | Requirement | Status | Notes |
 |---|---|---|
-| Signatures | ◐ | division + balancing ✅; no per-signature PDF, no labels |
+| Signatures | ✅ | division, balancing, per-signature or combined PDF export with sheet labels |
 | Creep | ✅ | None / Automatic / Custom, per-sheet offsets, limit flag |
 | Perfect binding | ✅ | spine calc, reading-order imposition and cover generation |
 | Spiral / Wire-O / comb | ✅ | margins, binding side and punch-zone preview |
 | Cover creator | ✅ | eBook, paperback, hardcover and dust jacket with full guide export |
 | Spine calculation | ✅ | both spec formulas + custom pages-per-mm |
-| Step-and-repeat | ◐ | optimum-grid fitting ✅ (Scenario C passes); no PDF |
-| Cut-and-stack | ◐ | sequence ✅; no PDF |
+| Step-and-repeat | ✅ | optimum-grid fitting and imposed PDF export |
+| Cut-and-stack | ◐ | sequence ✅; not yet wired to export |
 | Printer profiles | ✅ | saved per machine; jobs checked for fit, duplex, flip direction and bleed |
-| Automated preflight | ◐ | 6 of ~16 checks implemented |
+| Automated preflight | ◐ | 9 of ~16 checks: binding page count, mixed sizes, rotation, bleed, trim size, encryption, low DPI, colour space, spot colours |
 
-### COULD HAVE — 0%
+### COULD HAVE — ~25%
 
-PDF/X, ICC profiles, CMYK tooling, barcode generation, nesting optimisation,
-artwork bleed extension, AI cover design, cloud print integration — none present.
+Colour-space detection and spot-colour reporting are implemented, and the
+barcode *area* is reserved on covers. Still absent: PDF/X output intents, ICC
+profile embedding or conversion, CMYK conversion tooling, actual barcode
+generation, nesting optimisation, automatic artwork bleed extension, AI cover
+design and cloud print integration.
+
+PDF/X deserves a note: claiming conformance means embedding an output intent
+with an ICC profile and validating every rule in the standard. Detecting and
+reporting colour is honest; a PDF/X badge without validation would not be.
 
 ---
 
@@ -127,14 +144,14 @@ artwork bleed extension, AI cover design, cloud print integration — none prese
 |---|---|---|
 | 1 | PDF Foundation | ~95% — thumbnails ✅; image import (PNG/JPEG/TIFF/SVG) still missing |
 | 2 | Basic Print Preparation | ~90% — crop marks, sheet preview and trim/bleed boxes all ✅ |
-| 3 | N-Up Imposition | ~75% — sequences and imposed PDF ✅; no spacing/scaling controls |
+| 3 | N-Up Imposition | ~90% — sequences, imposed PDF, step-and-repeat and spacing ✅ |
 | 4 | Booklet Printing | ~95% — sequencing, duplex flip, imposed PDF, fold marks and previews all ✅ |
 | 5 | Binding Intelligence | ~95% — five binding methods with full settings profiles; hardcover board, hinge and turn-in geometry now on the Cover Creator |
-| 6 | Signature Engine | ~50% — division ✅, export and labels ✗ |
+| 6 | Signature Engine | ~95% — division, balancing, export and labels all ✅ |
 | 7 | Cover Designer | ~95% — all four cover kinds with spine, guides, barcode area and artwork placement |
 | 8 | AI Assistant | ~85% — request understanding, full recommendation, glossary and troubleshooting; no free-form conversation |
-| 9 | Automated Preflight | ~35% |
-| 10 | Advanced Commercial | 0% |
+| 9 | Automated Preflight | ~60% — resolution, colour, bleed, page-count and binding checks; no content-geometry analysis |
+| 10 | Advanced Commercial | ~20% — colour detection and spot reporting; no PDF/X or ICC |
 
 The README on `main` claims Phases 1, 3, 4, 5, 6 and 9 as "✅". That is accurate
 only if read as *"the calculations for these phases are complete"*. It overstates
@@ -195,6 +212,11 @@ object reference, never rasterised — §23 and §37.3 honoured). But there are 
 quality presets, no compression control and no PDF/X.
 
 **§24 Color** — absent. No RGB/CMYK detection or ICC handling.
+
+**§29 Project management** — implemented. New, open and save from the sidebar;
+projects store the source reference, page operations, binding settings, cover
+inputs and printer profile, and report when a referenced source has moved. Not
+yet present: autosave, a recent-projects list, and undo/redo.
 
 **§25 Printer profiles** — implemented. Name, maximum sheet, duplex and
 borderless support, minimum printable margin, configured sizes, preferred feed
