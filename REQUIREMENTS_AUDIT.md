@@ -69,19 +69,24 @@ has been resolved.** The imposition renderer now places source pages onto printe
 sheets and writes the file, so booklet imposition, N-up and duplex logic produce
 something a user can actually print rather than a number on screen.
 
-What remains is narrower. Of the nine export modes in §22, five exist (reading,
-imposed, booklet, N-up and cover); signature, step-and-repeat and proofing-guide
-PDFs do not.
-Print-ready output is complete for these modes: crop, fold and sheet marks are
-drawn, and `/TrimBox`, `/BleedBox` and `/CropBox` are written so a commercial
-printer knows exactly where to trim.
+Of the nine export modes in §22, seven exist: reading, print-ready, imposed,
+booklet, signature, step-and-repeat and cover. Only the N-up *proofing* variant
+with visible guides and cut-and-stack output remain unwired, and both already
+have their sequencing implemented and tested. Print-ready output is complete:
+crop, fold and sheet marks are drawn, and `/TrimBox`, `/BleedBox` and `/CropBox`
+are written so a commercial printer knows exactly where to trim.
 
 **§20 Preview** now shows the user's real artwork: page thumbnails on the import
 screen, and the actual pages composited into the sheet and bound-document previews.
 Crucially it is still met *correctly* — the previews are generated from the same
 `SheetSide` structures the exporter consumes, satisfying §37.9. Rasterising happens
 only in the webview for display; the export path still copies pages as vectors.
-What remains absent from §20 is zoom, pan and the individual guide toggles.
+Zoom, pan and mark toggles are all present.
+
+**What is left** is the COULD HAVE tier — PDF/X output intents, ICC embedding and
+CMYK conversion — plus autosave, recent-projects and undo/redo within §29, and
+the content-geometry preflight checks (text too near trim or binding) that would
+need glyph-level analysis the project does not do.
 
 ---
 
