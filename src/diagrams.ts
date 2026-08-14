@@ -409,6 +409,182 @@ export function gutterDiagram(marginMm: number, punched: boolean, side: string, 
 }
 
 // ---------------------------------------------------------------------------
+// 5b. Simulation of the finished, bound document
+// ---------------------------------------------------------------------------
+
+/** Draws the binding hardware down the spine of an open book. */
+function spineHardware(key: string, cx: number, top: number, height: number): string {
+  let out = "";
+  switch (key) {
+    case "saddle_stitch":
+      out += `<line x1="${cx}" y1="${top}" x2="${cx}" y2="${top + height}" stroke="${PAGE_EDGE}" stroke-width="1"/>`;
+      for (const f of [0.3, 0.7]) {
+        out += `<rect x="${cx - 2}" y="${top + height * f - 5}" width="4" height="10" rx="1" fill="${METAL}"/>`;
+      }
+      break;
+    case "perfect":
+      out += `<rect x="${cx - 4}" y="${top}" width="8" height="${height}" fill="${GLUE}" opacity="0.75"/>`;
+      break;
+    case "hardcover":
+      out += `<rect x="${cx - 5}" y="${top - 4}" width="10" height="${height + 8}" rx="2" fill="${BOARD}"/>`;
+      break;
+    case "spiral":
+      for (let i = 0; i < 9; i++) {
+        const y = top + 6 + i * ((height - 12) / 8);
+        out += `<path d="M ${cx - 8} ${y} C ${cx - 2} ${y - 7}, ${cx + 3} ${y + 4}, ${cx + 8} ${y - 3}"
+          fill="none" stroke="${ACCENT}" stroke-width="2" stroke-linecap="round"/>`;
+      }
+      break;
+    case "wire_o":
+      for (let i = 0; i < 7; i++) {
+        const y = top + 8 + i * ((height - 16) / 6);
+        out += `<path d="M ${cx - 6} ${y} C ${cx - 6} ${y - 6}, ${cx + 6} ${y - 6}, ${cx + 6} ${y}"
+          fill="none" stroke="${METAL}" stroke-width="2"/>`;
+      }
+      break;
+  }
+  return out;
+}
+
+/**
+ * One spread of the finished document, as it reads once bound.
+ *
+ * `left`/`right` are source page numbers, `null` for an inserted blank.
+ * `position` is the reading position of the right-hand page.
+ */
+export function boundSpreadDiagram(
+  key: string,
+  left: number | null,
+  right: number | null,
+  leftPos: number | null,
+  rightPos: number | null,
+  gutterMm: number,
+  bindSide: string
+): string {
+  const W = 420;
+  const H = 260;
+  const pw = 150;
+  const ph = 200;
+  const top = 22;
+  const cx = W / 2;
+  const gutter = Math.max(4, Math.min(26, gutterMm * 1.6));
+
+  const face = (x: number, page: number | null, pos: number | null, innerOnRight: boolean) => {
+    if (pos === null) {
+      // Outside the book — the cover's outer face.
+      return `<rect x="${x}" y="${top}" width="${pw}" height="${ph}" rx="2" fill="#f4f5fa"
+        stroke="${PAGE_EDGE}" stroke-width="1" stroke-dasharray="4 4"/>` +
+        label(x + pw / 2, top + ph / 2, "outside cover", "middle", 11);
+    }
+    const blank = page === null;
+    let out = `<rect x="${x}" y="${top}" width="${pw}" height="${ph}" rx="2"
+      fill="${blank ? "#fbfbfe" : PAPER}" stroke="${MUTED}" stroke-width="1.2"/>`;
+    if (blank) {
+      out += label(x + pw / 2, top + ph / 2 - 4, "blank", "middle", 12);
+      out += label(x + pw / 2, top + ph / 2 + 12, "inserted for binding", "middle", 9);
+    } else {
+      // Text block, pushed clear of the gutter.
+      const padL = innerOnRight ? 12 : gutter + 8;
+      const padR = innerOnRight ? gutter + 8 : 12;
+      for (let i = 0; i < 9; i++) {
+        const ly = top + 24 + i * 17;
+        const w = i === 8 ? (pw - padL - padR) * 0.55 : pw - padL - padR;
+        out += `<line x1="${x + padL}" y1="${ly}" x2="${x + padL + w}" y2="${ly}"
+          stroke="${PAGE_EDGE}" stroke-width="4" stroke-linecap="round"/>`;
+      }
+      out += label(x + pw / 2, top + ph - 10, `source page ${page}`, "middle", 9, ACCENT);
+    }
+    out += label(x + pw / 2, top + ph + 18, pos === null ? "" : `reading page ${pos}`, "middle", 10, INK);
+    return out;
+  };
+
+  const topEdge = bindSide === "top";
+  let body = "";
+  body += face(cx - pw - (topEdge ? 4 : 0), left, leftPos, false);
+  body += face(cx + (topEdge ? 4 : 0), right, rightPos, true);
+  if (!topEdge) body += spineHardware(key, cx, top, ph);
+
+  body += label(W / 2, 13, "How the pages read once bound", "middle", 11, INK);
+  return svg(W, H, body, "Simulated spread of the bound document");
+}
+
+/**
+ * One physical sheet side exactly as it will be printed, including the
+ * 180 degree rotation applied to back sides when the flip demands it.
+ */
+export function sheetSideDiagram(
+  side: { sheet_number: number; side: string; width: number; height: number; fold_x: number[]; placements: Array<{ page: number | null; x: number; y: number; width: number; height: number; rotation: number }> },
+  showMarks: boolean
+): string {
+  const W = 360;
+  const H = 250;
+  const pad = 26;
+  const s = Math.min((W - pad * 2) / side.width, (H - pad * 2 - 24) / side.height);
+  const sw = side.width * s;
+  const sh = side.height * s;
+  const ox = (W - sw) / 2;
+  const oy = 30;
+
+  // PDF space has its origin bottom-left; SVG is top-left.
+  const toY = (y: number, h: number) => oy + sh - (y + h) * s;
+
+  let body = `<rect x="${ox}" y="${oy}" width="${sw}" height="${sh}" rx="2"
+    fill="${PAPER}" stroke="${MUTED}" stroke-width="1.4"/>`;
+
+  for (const p of side.placements) {
+    const px = ox + p.x * s;
+    const py = toY(p.y, p.height);
+    const cw = p.width * s;
+    const ch = p.height * s;
+    const blank = p.page === null;
+    body += `<rect x="${px}" y="${py}" width="${cw}" height="${ch}"
+      fill="${blank ? "#fafafd" : PAGE_FILL}" stroke="${PAGE_EDGE}" stroke-width="1"
+      ${blank ? 'stroke-dasharray="4 3"' : ""}/>`;
+    const mx = px + cw / 2;
+    const my = py + ch / 2;
+    if (blank) {
+      body += label(mx, my + 4, "blank", "middle", 10);
+    } else {
+      body += `<text x="${mx}" y="${my + 9}" text-anchor="middle" font-size="26" font-weight="600"
+        font-family="Inter, Helvetica, Arial, sans-serif" fill="${ACCENT}"
+        transform="rotate(${p.rotation} ${mx} ${my})">${p.page}</text>`;
+      // A corner tick makes the applied rotation visible.
+      body += `<path d="M ${px + 4} ${py + 4} L ${px + 16} ${py + 4} L ${px + 4} ${py + 16} z"
+        fill="${PAGE_EDGE}" transform="rotate(${p.rotation} ${mx} ${my})"/>`;
+    }
+  }
+
+  for (const fx of side.fold_x) {
+    const x = ox + fx * s;
+    body += `<line x1="${x}" y1="${oy - 6}" x2="${x}" y2="${oy + sh + 6}"
+      stroke="${WARN}" stroke-width="1.3" stroke-dasharray="5 4"/>`;
+    body += label(x, oy - 10, "fold", "middle", 9, WARN);
+  }
+
+  if (showMarks) {
+    for (const p of side.placements) {
+      const l = ox + p.x * s;
+      const r = l + p.width * s;
+      const t = toY(p.y, p.height);
+      const b = t + p.height * s;
+      for (const [cxm, cym, dx, dy] of [
+        [l, b, -1, 1], [r, b, 1, 1], [l, t, -1, -1], [r, t, 1, -1],
+      ] as Array<[number, number, number, number]>) {
+        body += `<line x1="${cxm + dx * 3}" y1="${cym}" x2="${cxm + dx * 10}" y2="${cym}" stroke="${INK}" stroke-width="0.7"/>`;
+        body += `<line x1="${cxm}" y1="${cym + dy * 3}" x2="${cxm}" y2="${cym + dy * 10}" stroke="${INK}" stroke-width="0.7"/>`;
+      }
+    }
+  }
+
+  const rotated = side.placements.some((p) => p.rotation !== 0);
+  body +=
+    label(W / 2, 15, `Sheet ${side.sheet_number} — ${side.side}${rotated ? " (rotated 180° for the flip)" : ""}`, "middle", 11, INK) +
+    label(W / 2, oy + sh + 20, `${(side.width / 2.8346).toFixed(0)} × ${(side.height / 2.8346).toFixed(0)} mm sheet`, "middle", 9);
+
+  return svg(W, H, body, `Sheet ${side.sheet_number} ${side.side} as printed`);
+}
+
+// ---------------------------------------------------------------------------
 // 5. After printing — what the finished, folded job looks like
 // ---------------------------------------------------------------------------
 

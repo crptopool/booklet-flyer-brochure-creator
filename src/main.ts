@@ -1,11 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { openPath } from "@tauri-apps/plugin-opener";
 import {
   bindingDiagram,
+  boundSpreadDiagram,
   duplexFlipDiagram,
   gutterDiagram,
   pagesPerSheetDiagram,
   resultDiagram,
+  sheetSideDiagram,
 } from "./diagrams";
 
 // ---------------------------------------------------------------------------
@@ -98,6 +101,24 @@ interface DuplexPlan {
 interface PlanNote {
   severity: string;
   message: string;
+}
+
+interface SheetPlacement {
+  page: number | null;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation: number;
+}
+
+interface SheetSide {
+  sheet_number: number;
+  side: string;
+  width: number;
+  height: number;
+  placements: SheetPlacement[];
+  fold_x: number[];
 }
 
 interface BookletPlan {
@@ -498,6 +519,8 @@ el<HTMLButtonElement>("btn-booklet").addEventListener("click", async () => {
         .map((n) => `<li class="sev-${escapeHtml(n.severity.toLowerCase())}"><strong>${escapeHtml(n.severity)}</strong> ${escapeHtml(n.message)}</li>`)
         .join("")}</ul>`;
 
+    await refreshSimulation(plan);
+
     const spreads = await invoke<SheetSpread[]>("booklet_plan_spreads", { plan });
     const grid = el<HTMLDivElement>("booklet-spreads");
     grid.innerHTML = spreads.length
@@ -522,6 +545,179 @@ el<HTMLButtonElement>("btn-booklet").addEventListener("click", async () => {
 });
 
 const fmt = (p: number | null) => (p === null ? "—" : String(p));
+
+// ---------------------------------------------------------------------------
+// Binding simulation + imposed export
+// ---------------------------------------------------------------------------
+
+let currentPlan: BookletPlan | null = null;
+let currentSheets: SheetSide[] = [];
+let readingOrder: (number | null)[] = [];
+let simView: "bound" | "sheets" = "bound";
+let simIndex = 0;
+/** Set when the sheets could not be built — export is then refused too. */
+let sheetError = "";
+
+/** Trim and sheet sizes in mm, honouring the orientation selector. */
+async function currentSizes(): Promise<{ trim: [number, number]; sheet: [number, number] }> {
+  const sizes = await invoke<PaperSize[]>("list_paper_sizes");
+  const find = (name: string) => sizes.find((s) => s.name === name) ?? sizes[1];
+  const trim = find(el<HTMLSelectElement>("bk-trim").value);
+  const sheet = find(el<HTMLSelectElement>("bk-sheet").value);
+  const landscape = isLandscape();
+  return {
+    trim: [trim.width_mm, trim.height_mm],
+    // Only the printer sheet is turned; the trim page keeps its own shape.
+    sheet: landscape ? [sheet.height_mm, sheet.width_mm] : [sheet.width_mm, sheet.height_mm],
+  };
+}
+
+async function refreshSimulation(plan: BookletPlan) {
+  currentPlan = plan;
+  simIndex = 0;
+  sheetError = "";
+  el<HTMLElement>("sim-section").classList.remove("hidden");
+
+  const { trim, sheet } = await currentSizes();
+  try {
+    currentSheets = await invoke<SheetSide[]>("plan_sheets", { plan, trimMm: trim, sheetMm: sheet });
+  } catch (e) {
+    currentSheets = [];
+    sheetError = typeof e === "string" ? e : String(e);
+  }
+  readingOrder = await invoke<(number | null)[]>("bound_reading_order", { plan });
+  renderSimulation();
+}
+
+/** Spread `i` of a bound book: cover alone, then facing pairs. */
+function spreadAt(i: number): { left: number | null; right: number | null; leftPos: number | null; rightPos: number | null } {
+  if (i === 0) {
+    return { left: null, right: readingOrder[0] ?? null, leftPos: null, rightPos: 1 };
+  }
+  const leftPos = i * 2;
+  const rightPos = i * 2 + 1;
+  return {
+    left: readingOrder[leftPos - 1] ?? null,
+    right: rightPos <= readingOrder.length ? (readingOrder[rightPos - 1] ?? null) : null,
+    leftPos,
+    rightPos: rightPos <= readingOrder.length ? rightPos : null,
+  };
+}
+
+function spreadCount(): number {
+  return Math.max(1, Math.ceil((readingOrder.length + 1) / 2));
+}
+
+function renderSimulation() {
+  const stage = el<HTMLDivElement>("sim-stage");
+  const pos = el<HTMLSpanElement>("sim-pos");
+  if (!currentPlan) return;
+
+  if (simView === "sheets") {
+    if (sheetError) {
+      stage.innerHTML = `<p class="sev-warning">${escapeHtml(sheetError)}</p>`;
+      pos.textContent = "";
+      return;
+    }
+    const total = currentSheets.length;
+    simIndex = Math.min(simIndex, total - 1);
+    const side = currentSheets[simIndex];
+    stage.innerHTML = sheetSideDiagram(side, el<HTMLInputElement>("sim-marks").checked);
+    pos.textContent = `Sheet side ${simIndex + 1} of ${total}`;
+    return;
+  }
+
+  const total = spreadCount();
+  simIndex = Math.min(simIndex, total - 1);
+  const s = spreadAt(simIndex);
+  stage.innerHTML = boundSpreadDiagram(
+    currentPlan.profile.key,
+    s.left,
+    s.right,
+    s.leftPos,
+    s.rightPos,
+    Number(el<HTMLInputElement>("bk-margin").value) || 0,
+    el<HTMLSelectElement>("bk-side").value || "left"
+  );
+  pos.textContent = `Spread ${simIndex + 1} of ${total} · ${readingOrder.length} bound pages`;
+}
+
+document.querySelectorAll<HTMLButtonElement>("#sim-tabs .seg-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#sim-tabs .seg-btn").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    simView = btn.dataset.view as "bound" | "sheets";
+    simIndex = 0;
+    renderSimulation();
+  });
+});
+
+el<HTMLButtonElement>("sim-prev").addEventListener("click", () => {
+  simIndex = Math.max(0, simIndex - 1);
+  renderSimulation();
+});
+el<HTMLButtonElement>("sim-next").addEventListener("click", () => {
+  const total = simView === "sheets" ? currentSheets.length : spreadCount();
+  simIndex = Math.min(total - 1, simIndex + 1);
+  renderSimulation();
+});
+el<HTMLInputElement>("sim-marks").addEventListener("change", renderSimulation);
+
+/** Export the imposed PDF; optionally hand it to the OS for printing. */
+async function exportImposed(openAfter: boolean) {
+  if (!currentPlan) {
+    showError("Calculate the booklet plan first.");
+    return;
+  }
+  if (!source) {
+    showError("Import a PDF on the Import PDF tab first — the imposed file is built from it.");
+    return;
+  }
+  if (sheetError) {
+    showError(sheetError);
+    return;
+  }
+  const out = await save({
+    filters: [{ name: "PDF", extensions: ["pdf"] }],
+    defaultPath: `imposed-${currentPlan.profile.key}.pdf`,
+  });
+  if (!out) return;
+
+  const { trim, sheet } = await currentSizes();
+  const marks = el<HTMLInputElement>("sim-marks").checked;
+  const count = await invoke<number>("export_imposed_pdf", {
+    sourcePath: source.path,
+    plan: currentPlan,
+    trimMm: trim,
+    sheetMm: sheet,
+    outputPath: out,
+    marks: { crop_marks: marks, fold_marks: marks, sheet_labels: marks },
+  });
+
+  const box = el<HTMLDivElement>("export-result");
+  box.classList.remove("hidden");
+  box.innerHTML = `
+    <p class="sev-info">✓ Wrote <strong>${count}</strong> sheet side${count === 1 ? "" : "s"} to
+      <code>${escapeHtml(out)}</code>, arranged for ${escapeHtml(currentPlan.profile.name.toLowerCase())}.</p>
+    <p class="hint">The original file was not modified. Print this file at
+      <strong>100% / actual size</strong> with scaling turned off, and set your printer to
+      <strong>${escapeHtml(currentPlan.duplex.flip_axis)}</strong>${currentPlan.pages_per_sheet > currentPlan.pages_per_side ? " for double-sided output" : " (single-sided)"}.</p>`;
+
+  if (openAfter) {
+    try {
+      await openPath(out);
+    } catch {
+      box.innerHTML += `<p class="hint">Could not open the file automatically — open it from ${escapeHtml(out)}.</p>`;
+    }
+  }
+}
+
+el<HTMLButtonElement>("btn-export-imposed").addEventListener("click", () => {
+  exportImposed(false).catch(showError);
+});
+el<HTMLButtonElement>("btn-print-imposed").addEventListener("click", () => {
+  exportImposed(true).catch(showError);
+});
 
 // ---------------------------------------------------------------------------
 // N-Up panel

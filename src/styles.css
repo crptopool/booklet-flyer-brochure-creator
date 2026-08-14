@@ -346,6 +346,59 @@ select {
   line-height: 1.45;
 }
 
+/* Simulation view switch */
+.seg {
+  display: inline-flex;
+  border: 1px solid #ccd5ee;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.seg-btn {
+  background: white;
+  color: #445;
+  border: none;
+  border-radius: 0;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.88rem;
+}
+
+.seg-btn:hover {
+  background: #eef1fa;
+}
+
+.seg-btn.active {
+  background: #2c5fc4;
+  color: white;
+}
+
+.inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: #445;
+}
+
+#sim-stage {
+  display: flex;
+  justify-content: center;
+  padding: 0.8rem;
+  min-height: 240px;
+}
+
+#sim-stage svg {
+  max-width: 460px;
+}
+
+#export-result code {
+  background: #f2f4fb;
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+  font-size: 0.85em;
+  word-break: break-all;
+}
+
 /* Preflight severities */
 .sev-info {
   color: #22662c;

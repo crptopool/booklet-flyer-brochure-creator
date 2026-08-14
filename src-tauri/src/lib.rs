@@ -14,6 +14,7 @@ use print_calc::binding::BindingProfile;
 use print_calc::booklet::{BlankStrategy, SheetSpread};
 use print_calc::creep::{CreepMode, CreepResult};
 use print_calc::duplex::DuplexPlan;
+use pdf_ops::impose::{MarkOptions, SheetSide};
 use print_calc::plan::BookletPlan;
 use print_calc::presets::{BindingType, DuplexMode, PaperSize};
 
@@ -200,6 +201,57 @@ fn export_pdf(source_path: String, operations: Vec<Operation>, output_path: Stri
 }
 
 // ---------------------------------------------------------------------------
+// Imposition: arrange the document per the binding plan
+// ---------------------------------------------------------------------------
+
+/// Sheet sides for a plan — used by both the preview and the export so
+/// the simulation always matches the file that gets written.
+#[tauri::command]
+fn plan_sheets(
+    plan: BookletPlan,
+    trim_mm: (f64, f64),
+    sheet_mm: (f64, f64),
+) -> Result<Vec<SheetSide>, String> {
+    pdf_ops::sheets::sheets_for_plan(&plan, trim_mm, sheet_mm)
+}
+
+/// Write the imposed, print-ready PDF arranged for the chosen binding.
+#[tauri::command]
+fn export_imposed_pdf(
+    source_path: String,
+    plan: BookletPlan,
+    trim_mm: (f64, f64),
+    sheet_mm: (f64, f64),
+    output_path: String,
+    marks: MarkOptions,
+) -> Result<u32, String> {
+    let source = pdf_ops::document::inspect_pdf(&source_path)?;
+    if source.modification_restricted {
+        return Err("The PDF is protected and cannot be modified.".into());
+    }
+    if plan.source_pages > source.page_count {
+        return Err(format!(
+            "The plan covers {} pages but the document has {}.",
+            plan.source_pages, source.page_count
+        ));
+    }
+    let sides = pdf_ops::sheets::sheets_for_plan(&plan, trim_mm, sheet_mm)?;
+    pdf_ops::impose::export_imposed(&source_path, &sides, &output_path, marks)
+}
+
+/// Reading order of the finished, bound document.
+///
+/// Returns the source page for each position in the bound book, so the
+/// preview can simulate turning the pages after binding. `None` is a
+/// blank inserted to satisfy the binding's page-count rule.
+#[tauri::command]
+fn bound_reading_order(plan: BookletPlan) -> Vec<Option<u32>> {
+    (1..=plan.total_pages)
+        .map(|n| if n <= plan.source_pages { Some(n) } else { None })
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
 // Preflight
 // ---------------------------------------------------------------------------
 
@@ -241,6 +293,9 @@ pub fn run() {
             get_duplex_plan,
             build_booklet_plan,
             booklet_plan_spreads,
+            plan_sheets,
+            export_imposed_pdf,
+            bound_reading_order,
             inspect_pdf,
             preview_operations,
             export_pdf,
