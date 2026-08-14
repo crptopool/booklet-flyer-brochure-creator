@@ -111,6 +111,43 @@
 
         <button id="btn-booklet">Calculate booklet plan</button>
         <div id="booklet-result" class="card hidden"></div>
+
+        <!-- Simulation of the finished job + imposed export -->
+        <section id="sim-section" class="hidden">
+          <h3>Simulate the bound document</h3>
+          <p class="hint">
+            The simulation and the exported file are built from the same
+            imposition, so what you step through here is exactly what will be
+            printed.
+          </p>
+          <div class="row">
+            <div id="sim-tabs" class="seg">
+              <button type="button" class="seg-btn active" data-view="bound">Bound document</button>
+              <button type="button" class="seg-btn" data-view="sheets">Printed sheets</button>
+            </div>
+            <label class="inline-check">
+              <input type="checkbox" id="sim-marks" checked /> Show crop &amp; fold marks
+            </label>
+          </div>
+          <div id="sim-stage" class="card"></div>
+          <div class="row">
+            <button id="sim-prev">← Previous</button>
+            <span id="sim-pos" class="filename"></span>
+            <button id="sim-next">Next →</button>
+          </div>
+
+          <h3>Save or print the arranged document</h3>
+          <p class="hint" id="export-source-hint">
+            Import a PDF on the <strong>Import PDF</strong> tab first — the
+            imposed file is built from it. Your original file is never modified.
+          </p>
+          <div class="row">
+            <button id="btn-export-imposed">Save imposed PDF…</button>
+            <button id="btn-print-imposed">Save &amp; open for printing…</button>
+          </div>
+          <div id="export-result" class="card hidden"></div>
+        </section>
+
         <div id="booklet-spreads" class="spread-grid"></div>
       </section>
 

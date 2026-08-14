@@ -2,21 +2,26 @@
 
 **Audited against:** `AI_Agent_Print_Imposition_Booklet_Cover_Requirements.md`
 **Date:** 2026-08-14
-**Codebase:** Rust backend + TypeScript frontend, 119 passing unit tests
+**Codebase:** Rust backend + TypeScript frontend, 139 passing unit tests
 
 **Branches audited:** `main`, `copilot/create-print-layout-application`, `copilot/ai-agent-requirements-specification`
 
-> **Update — booklet binding methods added after the original audit.**
-> The Booklet screen now offers all five binding methods (saddle stitch,
-> perfect, spiral/coil, Wire-O, case binding) with per-method settings, a
-> pages-per-sheet selector, simplex/duplex choice and long-edge/short-edge
-> flip control. This closed three gaps recorded below: **§14 duplex flip-edge
-> logic** (`print_calc/duplex.rs`, with manual-duplex reinsertion steps),
-> **§11.3/§11.4 per-binding settings**, and part of **§20 preview** — every
-> setting now renders a live SVG illustration showing what it means and how
-> the job will look after printing. The scorecard rows for those items are
-> marked inline. Everything else below still stands, including the headline
-> finding.
+> **Update 1 — booklet binding methods.** All five binding methods
+> (saddle stitch, perfect, spiral/coil, Wire-O, case binding) with per-method
+> settings, pages-per-sheet, simplex/duplex and long/short-edge flip. Closed
+> **§14 duplex flip-edge logic** (`print_calc/duplex.rs`) and **§11.3/§11.4
+> per-binding settings**, and every setting renders a live illustration.
+>
+> **Update 2 — the imposition renderer now exists.** This retires the original
+> headline finding. `pdf_ops/impose.rs` places source pages onto printer sheets
+> as Form XObjects and writes a real imposed PDF; `pdf_ops/sheets.rs` turns a
+> binding plan into those sheets. Verified end-to-end: an 8-page source imposes
+> to `8|1 / 2|7 / 6|3 / 4|5` exactly as §11.1 specifies, with text still
+> selectable and fonts intact in the output. Closed or advanced: **§22 export
+> modes** (1 of 9 → 4 of 9), **§21 print marks** (crop, fold and sheet labels
+> rendered), **§20 preview** (bound-document and printed-sheet simulation, both
+> built from the same imposition the exporter consumes, satisfying §37.9), and
+> the MUST HAVE rows for booklet imposition and 1-up/2-up/4-up.
 
 ---
 
@@ -26,23 +31,23 @@ The **deterministic calculation core is genuinely strong** — it is the part of
 spec that was built properly, and it is well covered by tests. Every worked example
 in §34 and every acceptance scenario in §38 (A–E) has a corresponding passing test.
 
-The gap is that **almost none of those calculations reach a PDF or a screen.**
+**The original headline finding — that none of these calculations reached a PDF —
+has been resolved.** The imposition renderer now places source pages onto printer
+sheets and writes the file, so booklet imposition, N-up and duplex logic produce
+something a user can actually print rather than a number on screen.
 
-The application can *calculate* a booklet imposition but cannot *produce* one.
-`export_pdf` writes a reordered / rotated / blank-padded page list and nothing more —
-there is no code path anywhere that places source pages onto a printer sheet.
-Of the nine export modes required by §22, only mode 1 ("Reading PDF") exists.
+What remains is narrower. Of the nine export modes in §22, four exist (reading,
+imposed, booklet, N-up); signature, step-and-repeat, cover and preview PDFs do not.
+Print-ready output is close but incomplete: crop, fold and sheet marks are drawn,
+yet `/TrimBox` and `/BleedBox` are still not written to the output, so the file is
+not strictly print-ready for a commercial printer.
 
-That single gap invalidates several MUST HAVE line items at once: booklet
-imposition, print-ready PDF, 1-up/2-up/4-up, and duplex logic all currently
-terminate in a number displayed in the UI rather than in a file a user can print.
-
-The second gap is **§20 Preview**. The booklet screen now illustrates the binding,
-sheet layout, duplex flip and finished result, so the *settings* are visualised —
-but there is still no preview of the user's actual pages: no thumbnails, no sheet
-preview showing real content, no zoom or guide toggles. §37.9 requires previews to
-be rendered from the same geometry used for export, and since no imposed export
-exists yet, neither side of that sentence is fully implemented.
+**§20 Preview** is now partly met and, importantly, met *correctly*: the bound-document
+and printed-sheet simulations are generated from the same `SheetSide` structures the
+exporter consumes, which is what §37.9 asks for. The remaining gap is that previews
+show page *positions and numbers*, not rendered page *content* — there are still no
+thumbnails of the user's artwork, and no zoom or guide toggles. Rendering real page
+content would need a rasteriser the project does not currently depend on.
 
 ---
 
@@ -50,7 +55,7 @@ exists yet, neither side of that sentence is fully implemented.
 
 Legend: ✅ complete · ◐ partial (calculation exists, not delivered to user) · ✗ absent
 
-### MUST HAVE — ~55%
+### MUST HAVE — ~85%
 
 | # | Requirement | Status | Notes |
 |---|---|---|---|
@@ -59,16 +64,16 @@ Legend: ✅ complete · ◐ partial (calculation exists, not delivered to user) 
 | 3 | Trim & sheet sizes | ✅ | 11 presets incl. SRA3, 12×18, 13×19 |
 | 4 | Bleed | ◐ | `bleed_box()` computes it; **never written to the PDF** as `/TrimBox` `/BleedBox` |
 | 5 | Margins | ✅ | independent + binding-aware, `geometry.rs` |
-| 6 | 1-up / 2-up / 4-up | ◐ | sequences and cell geometry computed; no PDF output |
-| 7 | Booklet imposition | ◐ | sequencing correct and tested; no imposed PDF |
+| 6 | 1-up / 2-up / 4-up | ✅ | sequences, geometry and imposed PDF output |
+| 7 | Booklet imposition | ✅ | printer spreads rendered to PDF; verified against the §11.1 example |
 | 8 | Duplex logic | ✅ | flip long/short edge, back-side rotation, manual-duplex steps — `duplex.rs` |
-| 9 | Preview | ◐ | live SVG illustrations for binding, sheet layout, duplex flip and bound result; still no page thumbnails or per-sheet content preview |
+| 9 | Preview | ◐ | bound-document and printed-sheet simulation from the exporter's own geometry; still no rendered page content or thumbnails |
 | 10 | Blank-page handling | ✅ | never silent; two placement strategies |
-| 11 | Print-ready PDF | ✗ | no trim/bleed boxes, no marks, no imposition |
+| 11 | Print-ready PDF | ◐ | imposition and crop/fold/label marks ✅; `/TrimBox` and `/BleedBox` still not written |
 | 12 | DPI validation | ◐ | engine correct, but no image is ever extracted from a PDF to check |
-| 13 | Saddle-stitch support | ◐ | sequencing ✅, output ✗ |
+| 13 | Saddle-stitch support | ✅ | sequencing, imposition, folds and staple guidance |
 | 14 | Binding guidance | ✅ | per-binding margins, GSM→caliper guidance |
-| 15 | Deterministic sequencing | ✅ | pure Rust, 119 tests, zero model inference — §33 honoured |
+| 15 | Deterministic sequencing | ✅ | pure Rust, 139 tests, zero model inference — §33 honoured |
 
 ### SHOULD HAVE — ~40%
 
@@ -76,7 +81,7 @@ Legend: ✅ complete · ◐ partial (calculation exists, not delivered to user) 
 |---|---|---|
 | Signatures | ◐ | division + balancing ✅; no per-signature PDF, no labels |
 | Creep | ✅ | None / Automatic / Custom, per-sheet offsets, limit flag |
-| Perfect binding | ◐ | spine calc ✅; cover generation ✗ |
+| Perfect binding | ◐ | spine calc and reading-order imposition ✅; cover generation ✗ |
 | Spiral / Wire-O / comb | ✅ | margins, binding side and punch-zone preview |
 | Cover creator | ✗ | Phase 7 entirely absent |
 | Spine calculation | ✅ | both spec formulas + custom pages-per-mm |
@@ -97,9 +102,9 @@ artwork bleed extension, AI cover design, cloud print integration — none prese
 | Phase | Title | Status |
 |---|---|---|
 | 1 | PDF Foundation | ~85% — missing thumbnails and image import |
-| 2 | Basic Print Preparation | ~40% — calcs only; no crop marks, sheet preview or true print-ready PDF |
-| 3 | N-Up Imposition | ~50% — sequences ✅, no PDF output, no spacing/rotation/scaling controls |
-| 4 | Booklet Printing | ~70% — sequencing ✅, duplex flip logic ✅, setting previews ✅; no imposed PDF, no rendered fold/staple marks |
+| 2 | Basic Print Preparation | ~70% — crop marks and sheet preview ✅; trim/bleed boxes still unwritten |
+| 3 | N-Up Imposition | ~75% — sequences and imposed PDF ✅; no spacing/scaling controls |
+| 4 | Booklet Printing | ~95% — sequencing, duplex flip, imposed PDF, fold marks and previews all ✅ |
 | 5 | Binding Intelligence | ~85% — strongest phase; five binding methods with full settings profiles. Hardcover still lacks board/hinge/turn-in geometry |
 | 6 | Signature Engine | ~50% — division ✅, export and labels ✗ |
 | 7 | Cover Designer | 0% |
@@ -150,9 +155,11 @@ the printer test sheet.
 
 **§19 Cover Creator** — absent in full, both eBook and print-book covers.
 
-**§21 Print Marks** — no mark rendering of any kind.
+**§21 Print Marks** — crop marks, fold marks and sheet labels are drawn on the imposed 
+output and can be toggled. Registration marks, centre marks and colour bars are absent.
 
-**§22 PDF Export Modes** — 1 of 9 implemented.
+**§22 PDF Export Modes** — 4 of 9 implemented: reading, imposed, booklet and N-up. 
+Missing: signature PDFs, step-and-repeat, cover and proofing-guide PDFs.
 
 **§23 PDF Quality** — vectors, text and fonts *are* preserved (pages are copied by
 object reference, never rasterised — §23 and §37.3 honoured). But there are no
