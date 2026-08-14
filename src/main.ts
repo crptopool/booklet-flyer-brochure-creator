@@ -818,8 +818,10 @@ el<HTMLButtonElement>("sim-zoom-in").addEventListener("click", () => setSimZoom(
 el<HTMLButtonElement>("sim-zoom-out").addEventListener("click", () => setSimZoom(simZoom / 1.25));
 el<HTMLButtonElement>("sim-zoom-reset").addEventListener("click", resetSimView);
 
-// Scroll to zoom, drag to pan.
+// Ctrl (or Cmd) with the wheel zooms. A plain wheel must keep scrolling
+// the page, or the preview swallows the scroll and traps the reader.
 el<HTMLDivElement>("sim-stage").addEventListener("wheel", (e) => {
+  if (!e.ctrlKey && !e.metaKey) return;
   e.preventDefault();
   setSimZoom(simZoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12));
 }, { passive: false });
@@ -876,14 +878,13 @@ async function exportImposed(openAfter: boolean) {
   if (!out) return;
 
   const { trim, sheet } = await currentSizes();
-  const marks = el<HTMLInputElement>("sim-marks").checked;
   const count = await invoke<number>("export_imposed_pdf", {
     sourcePath: source.path,
     plan: currentPlan,
     trimMm: trim,
     sheetMm: sheet,
     outputPath: out,
-    marks: { crop_marks: marks, fold_marks: marks, sheet_labels: marks },
+    marks: markOptions(),
   });
 
   const box = el<HTMLDivElement>("export-result");
@@ -1496,7 +1497,13 @@ let projectPath: string | null = null;
 
 function markOptions() {
   const on = el<HTMLInputElement>("sim-marks")?.checked ?? true;
-  return { crop_marks: on, fold_marks: on, sheet_labels: on, bleed_mm: numVal("cv-bleed") || 3 };
+  const bleed = el<HTMLInputElement>("bk-bleed");
+  return {
+    crop_marks: on,
+    fold_marks: on,
+    sheet_labels: on,
+    bleed_mm: bleed ? Number(bleed.value) || 0 : 3,
+  };
 }
 
 /** Gather the whole application state into a project. */

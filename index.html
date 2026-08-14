@@ -234,7 +234,7 @@
             <span id="sim-zoom-label" class="filename">100%</span>
             <button type="button" id="sim-zoom-in" title="Zoom in">+</button>
             <button type="button" id="sim-zoom-reset" class="ghost">Reset</button>
-            <span class="hint">Scroll to zoom, drag to pan</span>
+            <span class="hint">Ctrl + scroll to zoom, drag to pan</span>
           </div>
           <div id="sim-stage" class="card"></div>
           <div class="row">
@@ -248,6 +248,11 @@
             Import a PDF on the <strong>Import PDF</strong> tab first — the
             imposed file is built from it. Your original file is never modified.
           </p>
+          <div class="form-grid">
+            <label>Bleed (mm)
+              <input type="number" id="bk-bleed" value="3" min="0" step="0.5" />
+            </label>
+          </div>
           <div class="row">
             <button id="btn-export-imposed">Save imposed PDF…</button>
             <button id="btn-print-imposed">Save &amp; open for printing…</button>
