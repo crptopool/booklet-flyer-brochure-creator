@@ -55,6 +55,15 @@
 > export. **§20** preview gained zoom and pan. **§24 colour** detects RGB,
 > CMYK, greyscale, ICC and named spot colourants and warns without ever
 > converting. Menu and diagram colours were also corrected to meet WCAG AA.
+>
+> **Update 6 — the planning screens follow the loaded document.** The page
+> count on the Booklet, N-Up and Cover screens was a standalone number that
+> never learned what had been opened, so a 48-page document was still planned,
+> simulated and exported as a 20-page booklet. The count now tracks the working
+> document, including pending inserts and deletions, and the screen states
+> which count it is planning. A count the user typed themselves is kept, and
+> the disagreement is shown with a one-click way back to the document's own
+> figure.
 
 ---
 
