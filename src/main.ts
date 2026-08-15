@@ -240,12 +240,81 @@ function escapeHtml(value: string): string {
 let source: PdfSource | null = null;
 let operations: Operation[] = [];
 
+/** Fields that answer "how many pages does the document have?". */
+const PAGE_COUNT_FIELDS = ["bk-pages", "nup-pages", "cv-pages"] as const;
+/** Fields the user has typed into themselves, which the document must not stamp over. */
+const pageCountTyped = new Set<string>();
+/** Page count of the loaded document *after* the pending page operations. */
+let documentPageCount: number | null = null;
+
+/**
+ * Push the loaded document's page count into the planning screens.
+ *
+ * The page count is a fact about the file, not a preference. Without this the
+ * screens keep their starting values, so opening a 48-page document still
+ * plans, simulates and exports a 20-page booklet — silently describing a
+ * document that does not exist. A value the user typed themselves is left
+ * alone, and the mismatch is called out instead.
+ */
+function syncPageCountFromDocument(count: number) {
+  documentPageCount = count;
+  for (const id of PAGE_COUNT_FIELDS) {
+    if (pageCountTyped.has(id)) continue;
+    const field = el<HTMLInputElement>(id);
+    if (Number(field.value) === count) continue;
+    field.value = String(count);
+    // Programmatic "change" — the typed-override flag hangs off "input".
+    field.dispatchEvent(new Event("change"));
+  }
+  showPageCountNotice();
+  // A plan already on screen was built for the old count, so it now
+  // contradicts the fields above it. Rebuild rather than leave it stale.
+  if (currentPlan) buildAndShowBookletPlan().catch(showError);
+}
+
+/** Say which page count the plan is using, and flag it when it isn't the document's. */
+function showPageCountNotice() {
+  const box = el<HTMLParagraphElement>("bk-pages-sync");
+  if (documentPageCount === null) {
+    box.classList.add("hidden");
+    return;
+  }
+  const typed = Number(el<HTMLInputElement>("bk-pages").value) || 0;
+  box.classList.remove("hidden");
+  box.className =
+    typed === documentPageCount ? "doc-sync" : "doc-sync doc-sync-mismatch";
+  box.innerHTML =
+    typed === documentPageCount
+      ? `Planning the loaded document: <strong>${documentPageCount}</strong> pages.`
+      : `The loaded document has <strong>${documentPageCount}</strong> pages, but this plan is
+         being built for <strong>${typed}</strong>.
+         <button type="button" id="bk-pages-use-doc">Use ${documentPageCount}</button>`;
+}
+
+document.addEventListener("click", (e) => {
+  if ((e.target as HTMLElement)?.id !== "bk-pages-use-doc") return;
+  if (documentPageCount === null) return;
+  pageCountTyped.clear();
+  syncPageCountFromDocument(documentPageCount);
+});
+
+for (const id of PAGE_COUNT_FIELDS) {
+  el<HTMLInputElement>(id).addEventListener("input", () => {
+    pageCountTyped.add(id);
+    if (id === "bk-pages") showPageCountNotice();
+  });
+}
+
 async function refreshPages() {
   if (!source) return;
   const pages = await invoke<VirtualPage[]>("preview_operations", {
     source,
     operations,
-  });  const grid = el<HTMLDivElement>("pdf-pages");
+  });
+  // Insertions and deletions change the document, so the planning screens
+  // follow the working page count, not the count the file arrived with.
+  syncPageCountFromDocument(pages.length);
+  const grid = el<HTMLDivElement>("pdf-pages");
   grid.innerHTML = "";
   pages.forEach((vp, i) => {
     const div = document.createElement("div");
@@ -336,6 +405,8 @@ el<HTMLButtonElement>("btn-open-pdf").addEventListener("click", async () => {
     if (!path) return;
     source = await invoke<PdfSource>("inspect_pdf", { path });
     operations = [];
+    // A new file supersedes counts typed for the previous one.
+    pageCountTyped.clear();
     try {
       await loadDocument(String(path));
     } catch {
@@ -578,8 +649,13 @@ el<HTMLSelectElement>("bk-sides").addEventListener("change", () => {
   applyBindingDefaults().catch(showError);
 });
 
-el<HTMLButtonElement>("btn-booklet").addEventListener("click", async () => {
-  try {
+el<HTMLButtonElement>("btn-booklet").addEventListener("click", () => {
+  buildAndShowBookletPlan().catch(showError);
+});
+
+/** Build the production plan from the form and paint every panel that depends on it. */
+async function buildAndShowBookletPlan() {
+  {
     const pages = Number(el<HTMLInputElement>("bk-pages").value);
     const plan = await invoke<BookletPlan>("build_booklet_plan", {
       binding: selectedBinding,
@@ -626,10 +702,8 @@ el<HTMLButtonElement>("btn-booklet").addEventListener("click", async () => {
          pages in normal reading order instead.</p>`;
 
     await renderConfigDiagrams();
-  } catch (e) {
-    showError(e);
   }
-});
+}
 
 const fmt = (p: number | null) => (p === null ? "—" : String(p));
 
@@ -1407,7 +1481,10 @@ el<HTMLButtonElement>("btn-assistant-apply").addEventListener("click", () => {
   if (!a?.plan) return;
   selectedBinding = a.plan.profile.key;
   marginOverridden = false;
+  // The count the user described to the assistant wins over the loaded file.
+  pageCountTyped.add("bk-pages");
   el<HTMLInputElement>("bk-pages").value = String(a.plan.source_pages);
+  showPageCountNotice();
   if (a.suggested_trim) el<HTMLSelectElement>("bk-trim").value = a.suggested_trim;
   if (a.suggested_sheet) el<HTMLSelectElement>("bk-sheet").value = a.suggested_sheet;
   el<HTMLSelectElement>("bk-orientation").value = a.sheet_is_landscape ? "landscape" : "portrait";
@@ -1537,6 +1614,10 @@ async function applyProject(p: Project) {
   const b = p.booklet;
   selectedBinding = b.binding;
   marginOverridden = true; // the saved margin wins over the method default
+  // The saved counts are deliberate, so re-opening the source must not
+  // overwrite them; a disagreement is surfaced by the notice instead.
+  pageCountTyped.add("bk-pages");
+  if (p.cover) pageCountTyped.add("cv-pages");
   el<HTMLInputElement>("bk-pages").value = String(b.page_count);
   el<HTMLSelectElement>("bk-per-side").value = String(b.pages_per_side);
   el<HTMLSelectElement>("bk-sides").value = b.duplex === "simplex" ? "single" : "double";
@@ -1562,6 +1643,7 @@ async function applyProject(p: Project) {
   await renderBindingMethods();
   el<HTMLSelectElement>("bk-side").value = b.binding_side;
   await refreshCover();
+  showPageCountNotice();
   el<HTMLDivElement>("project-name").textContent = p.name;
 }
 
@@ -1570,6 +1652,7 @@ el<HTMLButtonElement>("btn-proj-new").addEventListener("click", async () => {
     const fresh = await invoke<Project>("new_project");
     projectPath = null;
     source = null;
+    documentPageCount = null; // nothing loaded, so nothing to compare against
     unloadPdf();
     el<HTMLSpanElement>("pdf-name").textContent = "";
     el<HTMLDivElement>("pdf-info").classList.add("hidden");

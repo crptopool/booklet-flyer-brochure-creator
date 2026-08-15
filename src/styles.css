@@ -273,6 +273,34 @@ main > .panel > h2 {
   font-size: 0.9rem;
 }
 
+/* Tells the user which page count the plan is actually using. */
+.doc-sync {
+  margin: 0.35rem 0 0;
+  font-size: 0.82rem;
+  font-weight: 400;
+  line-height: 1.35;
+  color: #2f6b3d;
+}
+
+.doc-sync-mismatch {
+  color: #8a4b00;
+}
+
+.doc-sync button {
+  margin-left: 0.4rem;
+  padding: 0.12rem 0.5rem;
+  font-size: 0.78rem;
+  border: 1px solid #8a4b00;
+  border-radius: 5px;
+  background: #fff5e6;
+  color: #8a4b00;
+  cursor: pointer;
+}
+
+.doc-sync button:hover {
+  background: #ffe9cc;
+}
+
 .row {
   display: flex;
   gap: 0.75rem;
