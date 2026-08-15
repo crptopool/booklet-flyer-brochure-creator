@@ -37,9 +37,62 @@ jobs:
         working-directory: ./src-tauri
         run: cargo test --lib
 
+  # The three build jobs run at once, so if each of them creates the release
+  # itself they race: whichever finishes second gets `already_exists` and
+  # drops its installers on the floor. Creating it once, up front, means the
+  # builders only ever upload.
+  create-release:
+    name: Create the release
+    needs: test
+    runs-on: ubuntu-22.04
+    outputs:
+      release_id: ${{ steps.release.outputs.release_id }}
+    env:
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      RELEASE_BODY: |
+        Desktop test build of **PrintPrep — Booklet, Flyer & Brochure Creator**.
+
+        Download the installer for your platform from the assets below.
+
+        - **Windows** — `.msi` or `.exe` (NSIS)
+        - **macOS** — `.dmg` (universal: Apple Silicon and Intel)
+        - **Linux** — `.AppImage` (run directly) or `.deb`
+
+        Builds are unsigned, so the OS will warn on first launch:
+        Windows SmartScreen → *More info* → *Run anyway*;
+        macOS → right-click the app → *Open*, or
+        `xattr -cr /Applications/PrintPrep.app`.
+    steps:
+      - uses: actions/github-script@v7
+        id: release
+        with:
+          script: |
+            const tag = process.env.RELEASE_TAG;
+            const { owner, repo } = context.repo;
+            let release;
+            try {
+              // Re-running a partly failed build must top up the same
+              // release rather than fail on the existing tag.
+              release = (await github.rest.repos.getReleaseByTag({ owner, repo, tag })).data;
+              core.info(`Reusing release ${release.id} for ${tag}`);
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              release = (await github.rest.repos.createRelease({
+                owner,
+                repo,
+                tag_name: tag,
+                name: `PrintPrep ${tag}`,
+                body: process.env.RELEASE_BODY,
+                draft: false,
+                prerelease: true,
+              })).data;
+              core.info(`Created release ${release.id} for ${tag}`);
+            }
+            core.setOutput('release_id', release.id);
+
   build:
     name: Build ${{ matrix.label }}
-    needs: test
+    needs: create-release
     strategy:
       fail-fast: false
       matrix:
@@ -89,21 +142,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.event.inputs.tag || github.ref_name }}
-          releaseName: 'PrintPrep ${{ github.event.inputs.tag || github.ref_name }}'
-          releaseBody: |
-            Desktop test build of **PrintPrep — Booklet, Flyer & Brochure Creator**.
-
-            Download the installer for your platform from the assets below.
-
-            - **Windows** — `.msi` or `.exe` (NSIS)
-            - **macOS** — `.dmg` (universal: Apple Silicon and Intel)
-            - **Linux** — `.AppImage` (run directly) or `.deb`
-
-            Builds are unsigned, so the OS will warn on first launch:
-            Windows SmartScreen → *More info* → *Run anyway*;
-            macOS → right-click the app → *Open*, or
-            `xattr -cr /Applications/PrintPrep.app`.
-          releaseDraft: false
-          prerelease: true
+          # The release already exists, so this only uploads to it.
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
