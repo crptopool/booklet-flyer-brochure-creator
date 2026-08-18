@@ -34,6 +34,8 @@ export interface SheetSide {
   placements: Placement[];
   fold_x: number[];
   fold_y?: number[];
+  cut_x?: number[];
+  cut_y?: number[];
   stock: string;
 }
 
@@ -145,6 +147,28 @@ export async function paintSheet(side: SheetSide, showMarks: boolean, maxWidth =
     // PDF space measures up from the bottom; the canvas measures down.
     const y = oy + sh - fy * scale;
     crease([ox - 6, y], [ox + sw + 6, y], [ox - 14, y - 3]);
+  }
+
+  // Cuts are solid where folds are dashed: the waste past a cut line is
+  // removed, and the scissors glyph says so at a glance.
+  const cut = (from: [number, number], to: [number, number], at: [number, number]) => {
+    ctx.save();
+    ctx.strokeStyle = WARN;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(from[0], from[1]);
+    ctx.lineTo(to[0], to[1]);
+    ctx.stroke();
+    ctx.restore();
+    label(ctx, "✂ cut", at[0], at[1], 9, WARN);
+  };
+  for (const cx of side.cut_x ?? []) {
+    const x = ox + cx * scale;
+    cut([x, oy - 6], [x, oy + sh + 6], [x + 16, oy - 9]);
+  }
+  for (const cy of side.cut_y ?? []) {
+    const y = oy + sh - cy * scale;
+    cut([ox - 6, y], [ox + sw + 6, y], [ox + sw - 16, y - 5]);
   }
 
   if (showMarks) {

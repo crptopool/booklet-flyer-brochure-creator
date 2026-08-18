@@ -513,7 +513,7 @@ export function boundSpreadDiagram(
  * 180 degree rotation applied to back sides when the flip demands it.
  */
 export function sheetSideDiagram(
-  side: { sheet_number: number; side: string; stock?: string; width: number; height: number; fold_x: number[]; fold_y?: number[]; placements: Array<{ page: number | null; x: number; y: number; width: number; height: number; rotation: number }> },
+  side: { sheet_number: number; side: string; stock?: string; width: number; height: number; fold_x: number[]; fold_y?: number[]; cut_x?: number[]; cut_y?: number[]; placements: Array<{ page: number | null; x: number; y: number; width: number; height: number; rotation: number }> },
   showMarks: boolean
 ): string {
   const W = 360;
@@ -566,6 +566,21 @@ export function sheetSideDiagram(
     body += `<line x1="${ox - 6}" y1="${y}" x2="${ox + sw + 6}" y2="${y}"
       stroke="${WARN}" stroke-width="1.3" stroke-dasharray="5 4"/>`;
     body += label(ox - 10, y - 3, "fold", "end", 9, WARN);
+  }
+
+  // Cuts are drawn solid where folds are dashed — the waste beyond a cut
+  // is removed, so the two must never look alike.
+  for (const cx of side.cut_x ?? []) {
+    const x = ox + cx * s;
+    body += `<line x1="${x}" y1="${oy - 6}" x2="${x}" y2="${oy + sh + 6}"
+      stroke="${WARN}" stroke-width="1.7"/>`;
+    body += label(x + 18, oy - 10, "✂ cut", "middle", 9, WARN);
+  }
+  for (const cy of side.cut_y ?? []) {
+    const y = oy + sh - cy * s;
+    body += `<line x1="${ox - 6}" y1="${y}" x2="${ox + sw + 6}" y2="${y}"
+      stroke="${WARN}" stroke-width="1.7"/>`;
+    body += label(ox + sw + 8, y - 3, "✂ cut", "start", 9, WARN);
   }
 
   if (showMarks) {

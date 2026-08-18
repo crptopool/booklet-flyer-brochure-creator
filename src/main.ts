@@ -469,7 +469,7 @@ el<HTMLButtonElement>("btn-export-pdf").addEventListener("click", async () => {
 
 async function populatePaperSizes() {
   const sizes = await invoke<PaperSize[]>("list_paper_sizes");
-  for (const id of ["bk-trim", "bk-sheet", "bk-cover-sheet"]) {
+  for (const id of ["bk-trim", "bk-sheet"]) {
     const select = el<HTMLSelectElement>(id);
     select.innerHTML = sizes
       .map((s) => `<option value="${s.name}">${s.name} (${s.width_mm} × ${s.height_mm} mm)</option>`)
@@ -477,53 +477,50 @@ async function populatePaperSizes() {
   }
   el<HTMLSelectElement>("bk-trim").value = "A5";
   el<HTMLSelectElement>("bk-sheet").value = "A4";
-  el<HTMLSelectElement>("bk-cover-sheet").value = "A5";
 }
 
 /**
- * Whether the cover is a separate wrap, and on what paper.
- *
- * `null` means "no separate cover" — the outermost sheet of the text stock
- * carries the cover pages, which is how a self-cover booklet has always
- * worked here. This is the one place that decision is made, so the plan,
- * the simulation and the export all read it from here and cannot disagree.
+ * The cover configuration: whether the booklet gets a wrap-around cover
+ * (its own dedicated sheet 1), and whether that sheet is on different
+ * paper. The two are independent: the geometry is the same either way,
+ * so the stock choice only affects the plan's advice, never the layout.
+ * This is the one place the decision is read, so the plan, the simulation
+ * and the export cannot disagree.
  */
-async function coverStock(): Promise<{ gsm: number; sheetMm: [number, number] } | null> {
-  if (!el<HTMLInputElement>("bk-cover-sep").checked) return null;
-  const sizes = await invoke<PaperSize[]>("list_paper_sizes");
-  const chosen = sizes.find((s) => s.name === el<HTMLSelectElement>("bk-cover-sheet").value) ?? sizes[1];
-  // The cover sheet follows the same orientation choice as the text sheet —
-  // a landscape job wraps in a landscape cover.
-  const landscape = isLandscape();
+function coverConfig(): { withCover: boolean; gsm: number | null } {
+  const withCover = el<HTMLInputElement>("bk-cover-sep").checked;
+  if (!withCover) return { withCover: false, gsm: null };
+  const differs = el<HTMLInputElement>("bk-cover-diff").checked;
   return {
-    gsm: Number(el<HTMLInputElement>("bk-cover-gsm").value) || 200,
-    sheetMm: landscape ? [chosen.height_mm, chosen.width_mm] : [chosen.width_mm, chosen.height_mm],
+    withCover: true,
+    gsm: differs ? Number(el<HTMLInputElement>("bk-cover-gsm").value) || 200 : null,
   };
 }
 
 /**
- * The four page numbers the user has designated as already-in-document
- * cover art, in wrap order — or `null` when the cover is blank.
+ * The two page numbers the user has designated as already-in-document
+ * cover art — front cover then back cover — or `null` when the cover is
+ * blank.
  *
- * Reads straight from the four number fields rather than validating here;
+ * Reads straight from the number fields rather than validating here;
  * `build_booklet_plan` is the single source of truth for whether a
- * selection is usable (four distinct pages within the document), so its
+ * selection is usable (two distinct pages within the document), so its
  * error is what reaches the user rather than a second, possibly divergent,
  * check on this side.
  */
 function coverSourcePages(): number[] | null {
   if (!el<HTMLInputElement>("bk-cover-sep").checked) return null;
   if (!el<HTMLInputElement>("bk-cover-included").checked) return null;
-  const ids = ["bk-cover-p1", "bk-cover-p2", "bk-cover-p3", "bk-cover-p4"];
+  const ids = ["bk-cover-p1", "bk-cover-p2"];
   return ids.map((id) => Number(el<HTMLInputElement>(id).value) || 0);
 }
 
-/** Fill the four cover-page fields with the document's own first/last pages. */
+/** Fill the cover-page fields with the document's own first and last pages. */
 function prefillCoverPages() {
   const total = Number(el<HTMLInputElement>("bk-pages").value) || 0;
-  if (total < 4) return;
-  const fields = ["bk-cover-p1", "bk-cover-p2", "bk-cover-p3", "bk-cover-p4"];
-  const defaults = [1, 2, total - 1, total];
+  if (total < 2) return;
+  const fields = ["bk-cover-p1", "bk-cover-p2"];
+  const defaults = [1, total];
   fields.forEach((id, i) => {
     const field = el<HTMLInputElement>(id);
     if (!field.value) field.value = String(defaults[i]);
@@ -532,13 +529,17 @@ function prefillCoverPages() {
 
 el<HTMLInputElement>("bk-cover-sep").addEventListener("change", () => {
   const on = el<HTMLInputElement>("bk-cover-sep").checked;
-  el<HTMLSelectElement>("bk-cover-sheet").disabled = !on;
-  el<HTMLInputElement>("bk-cover-gsm").disabled = !on;
+  el<HTMLInputElement>("bk-cover-diff").disabled = !on;
   el<HTMLInputElement>("bk-cover-included").disabled = !on;
+  el<HTMLInputElement>("bk-cover-gsm").disabled = !on || !el<HTMLInputElement>("bk-cover-diff").checked;
   if (!on) {
     el<HTMLInputElement>("bk-cover-included").checked = false;
     el<HTMLDivElement>("bk-cover-picker").classList.add("hidden");
   }
+  replanIfShowing();
+});
+el<HTMLInputElement>("bk-cover-diff").addEventListener("change", () => {
+  el<HTMLInputElement>("bk-cover-gsm").disabled = !el<HTMLInputElement>("bk-cover-diff").checked;
   replanIfShowing();
 });
 el<HTMLInputElement>("bk-cover-included").addEventListener("change", () => {
@@ -547,7 +548,7 @@ el<HTMLInputElement>("bk-cover-included").addEventListener("change", () => {
   if (on) prefillCoverPages();
   replanIfShowing();
 });
-for (const id of ["bk-cover-sheet", "bk-cover-gsm", "bk-cover-p1", "bk-cover-p2", "bk-cover-p3", "bk-cover-p4"]) {
+for (const id of ["bk-cover-gsm", "bk-cover-p1", "bk-cover-p2"]) {
   el<HTMLElement>(id).addEventListener("change", replanIfShowing);
 }
 
@@ -857,7 +858,7 @@ el<HTMLButtonElement>("btn-booklet").addEventListener("click", () => {
 async function buildAndShowBookletPlan() {
   {
     const pages = Number(el<HTMLInputElement>("bk-pages").value);
-    const cover = await coverStock();
+    const cover = coverConfig();
     const note = el<HTMLParagraphElement>("bk-cover-picker-note");
     let plan: BookletPlan;
     try {
@@ -868,7 +869,8 @@ async function buildAndShowBookletPlan() {
         duplexMode: duplexMode(),
         sheetIsLandscape: isLandscape(),
         gsm: Number(el<HTMLInputElement>("bk-gsm").value),
-        coverGsm: cover?.gsm ?? null,
+        withCover: cover.withCover,
+        coverGsm: cover.gsm,
         coverSourcePages: coverSourcePages(),
       });
     } catch (e) {
@@ -888,8 +890,8 @@ async function buildAndShowBookletPlan() {
       <ul class="spec-list">
         <li><strong>Sheets of paper</strong> ${plan.sheet_count}${plan.separate_cover ? ` (${plan.cover_sheet_count} cover + ${plan.text_sheet_count} text)` : ""}</li>
         <li><strong>Pages per sheet</strong> ${plan.pages_per_sheet} (${plan.pages_per_side} per side${plan.pages_per_sheet > plan.pages_per_side ? ", both sides" : ", one side"})</li>
-        <li><strong>Total pages</strong> ${plan.total_pages}${plan.blanks_needed ? ` (${plan.source_pages} supplied + ${plan.blanks_needed} blank)` : ""}</li>
-        ${plan.separate_cover ? `<li><strong>Cover stock</strong> ${plan.cover_gsm?.toFixed(0)} GSM, printed separately — ${plan.cover_source_pages.length ? `pages ${plan.cover_source_pages.join(", ")}` : "blank"}</li>` : ""}
+        <li><strong>Total pages</strong> ${plan.total_pages}${plan.blanks_needed ? ` (${plan.source_pages - plan.cover_source_pages.length} in the body + ${plan.blanks_needed} blank${plan.cover_source_pages.length ? `; ${plan.cover_source_pages.length} more on the cover` : ""})` : ""}</li>
+        ${plan.separate_cover ? `<li><strong>Cover</strong> sheet 1, front printed only — ${plan.cover_source_pages.length ? `page ${plan.cover_source_pages[0]} (front) and page ${plan.cover_source_pages[1]} (back)` : "blank, with cut and fold marks"}${plan.cover_gsm !== null ? ` — on ${plan.cover_gsm.toFixed(0)} GSM stock` : " — same paper as the text"}</li>` : ""}
         <li><strong>Folds per sheet</strong> ${plan.folds_per_sheet}</li>
         <li><strong>Duplex</strong> ${escapeHtml(plan.duplex.flip_axis)}${plan.duplex.back_side_inverted ? " — back sides rotated 180°" : ""}</li>
         ${plan.spine_width_mm !== null ? `<li><strong>Spine width</strong> ${plan.spine_width_mm.toFixed(2)} mm at ${plan.caliper_mm.toFixed(3)} mm caliper</li>` : ""}
@@ -902,12 +904,12 @@ async function buildAndShowBookletPlan() {
 
     const spreads = await invoke<SheetSpread[]>("booklet_plan_spreads", { plan });
     const grid = el<HTMLDivElement>("booklet-spreads");
-    // The cover is a separate sheet on separate paper, so it is never one
-    // of the rows here; every sheet in this table is text stock.
+    // The cover is its own dedicated sheet, so it is never one of the rows
+    // here; every sheet in this table is the text block.
     const coverNote = plan.separate_cover
-      ? `<p class="hint">Plus one cover sheet at ${plan.cover_gsm?.toFixed(0)} GSM, not shown here — ${
+      ? `<p class="hint">Plus the cover sheet (sheet 1 of the job${plan.cover_gsm !== null ? `, on ${plan.cover_gsm.toFixed(0)} GSM stock` : ""}), not shown here — ${
           plan.cover_source_pages.length
-            ? `it carries pages ${plan.cover_source_pages.join(", ")}, which are not in the sheets below.`
+            ? `its outside carries page ${plan.cover_source_pages[0]} (front cover) and page ${plan.cover_source_pages[1]} (back cover), which are not in the sheets below.`
             : "it is blank and carries none of these pages."
         }</p>`
       : "";
@@ -1009,13 +1011,11 @@ async function refreshSimulation(plan: BookletPlan) {
   el<HTMLElement>("sim-section").classList.remove("hidden");
 
   const { trim, sheet } = await currentSizes();
-  const cover = await coverStock();
   try {
     currentSheets = await invoke<SheetSide[]>("plan_sheets", {
       plan,
       trimMm: trim,
       sheetMm: sheet,
-      coverSheetMm: cover?.sheetMm ?? null,
     });
   } catch (e) {
     currentSheets = [];
@@ -1190,15 +1190,6 @@ async function exportImposed(openAfter: boolean) {
   if (!out) return;
 
   const { trim, sheet } = await currentSizes();
-  const cover = await coverStock();
-  // A separate cover is a different print run on different paper, so it
-  // goes to its own file — named next to the text file rather than asking
-  // for a second save location.
-  const coverOut = currentPlan.separate_cover
-    ? /\.pdf$/i.test(out)
-      ? out.replace(/\.pdf$/i, "-cover.pdf")
-      : `${out}-cover.pdf`
-    : null;
   const count = await invoke<number>("export_imposed_pdf", {
     sourcePath: source.path,
     plan: currentPlan,
@@ -1206,16 +1197,28 @@ async function exportImposed(openAfter: boolean) {
     sheetMm: sheet,
     outputPath: out,
     marks: markOptions(),
-    coverSheetMm: cover?.sheetMm ?? null,
-    coverOutputPath: coverOut,
   });
+
+  // One file for the whole job: with a cover, its two sides are the file's
+  // first two pages, so it can be pulled out and printed on its own stock.
+  const coverAdvice = currentPlan.separate_cover
+    ? `<p class="sev-info">✓ The cover is the file's first sheet (pages 1–2: printed front, blank back).${
+        currentPlan.cover_gsm !== null
+          ? ` It belongs on ${currentPlan.cover_gsm.toFixed(0)} GSM stock — feed one sheet of it first, or print just pages 1–2 as a separate run on that stock.`
+          : " It prints on the same paper as the rest, so the whole file can go as one job."
+      }${
+        currentPlan.cover_source_pages.length
+          ? ` Its outside carries page ${currentPlan.cover_source_pages[0]} (front cover) and page ${currentPlan.cover_source_pages[1]} (back cover), which have been left out of the booklet body.`
+          : " It is blank apart from cut and fold marks — cut along the solid marks, fold at the dashed one, and it wraps the booklet."
+      }</p>`
+    : "";
 
   const box = el<HTMLDivElement>("export-result");
   box.classList.remove("hidden");
   box.innerHTML = `
     <p class="sev-info">✓ Wrote <strong>${count}</strong> sheet side${count === 1 ? "" : "s"} to
       <code>${escapeHtml(out)}</code>, arranged for ${escapeHtml(currentPlan.profile.name.toLowerCase())}.</p>
-    ${coverOut ? `<p class="sev-info">✓ Cover wrap written separately to <code>${escapeHtml(coverOut)}</code> — print it on the ${escapeHtml(el<HTMLSelectElement>("bk-cover-sheet").value)} cover stock, not with the text run.${currentPlan.cover_source_pages.length ? ` It carries pages ${currentPlan.cover_source_pages.join(", ")} from your document, which have been left out of the booklet body.` : " It is blank; add your cover artwork before printing it."}</p>` : ""}
+    ${coverAdvice}
     <p class="hint">The original file was not modified. Print this file at
       <strong>100% / actual size</strong> with scaling turned off, and set your printer to
       <strong>${escapeHtml(currentPlan.duplex.flip_axis)}</strong>${currentPlan.pages_per_sheet > currentPlan.pages_per_side ? " for double-sided output" : " (single-sided)"}.</p>`;

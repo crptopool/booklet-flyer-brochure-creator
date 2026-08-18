@@ -176,13 +176,20 @@
           <label class="span-2">
             <span class="inline-check">
               <input type="checkbox" id="bk-cover-sep" />
-              Cover on different paper
+              Add a wrap-around cover (sheet 1)
             </span>
-            <span class="hint" id="bk-cover-hint">A heavier or larger cover is folded as its own
-              wrap around the text block, and printed as a separate run.</span>
+            <span class="hint" id="bk-cover-hint">The cover is its own dedicated sheet, first in
+              the job: twice the trim size, printed on the outside only — back cover beside front
+              cover — with the inside left blank. It uses the same sheet size as everything else;
+              cut and fold marks show where to trim the waste and where the spine folds.</span>
           </label>
-          <label>Cover sheet size
-            <select id="bk-cover-sheet" disabled></select>
+          <label class="span-2">
+            <span class="inline-check">
+              <input type="checkbox" id="bk-cover-diff" disabled />
+              Cover on different paper (GSM / type)
+            </span>
+            <span class="hint">The geometry is identical either way — this only records which
+              stock to feed for sheet 1, or lets you print that one sheet as its own run.</span>
           </label>
           <label>Cover weight (GSM)
             <input type="number" id="bk-cover-gsm" value="200" min="1" step="10" disabled />
@@ -193,21 +200,15 @@
               Cover pages are already in this document
             </span>
             <span class="hint">Leave unchecked for a blank cover you'll design separately. Check
-              this only if pages inside the file you imported are meant to be the cover art —
-              they'll be pulled out of the booklet body and printed on the cover sheet instead.</span>
+              this only if two pages inside the file you imported are the cover art — they'll be
+              pulled out of the booklet body and printed on the cover sheet's outside instead.</span>
           </label>
           <div class="span-2 cover-page-picker hidden" id="bk-cover-picker">
-            <label>Outside front
+            <label>Front cover page
               <input type="number" id="bk-cover-p1" min="1" />
             </label>
-            <label>Inside front
+            <label>Back cover page
               <input type="number" id="bk-cover-p2" min="1" />
-            </label>
-            <label>Inside back
-              <input type="number" id="bk-cover-p3" min="1" />
-            </label>
-            <label>Outside back
-              <input type="number" id="bk-cover-p4" min="1" />
             </label>
           </div>
           <p id="bk-cover-picker-note" class="doc-sync hidden span-2"></p>

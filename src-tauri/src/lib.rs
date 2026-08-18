@@ -210,6 +210,7 @@ fn sheet_capacity(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 fn build_booklet_plan(
     binding: BindingType,
     source_pages: u32,
@@ -217,9 +218,13 @@ fn build_booklet_plan(
     duplex_mode: DuplexMode,
     sheet_is_landscape: bool,
     gsm: f64,
+    // Whether the booklet gets a wrap-around cover as its own dedicated
+    // sheet 1 — independent of whether its paper differs.
+    with_cover: bool,
+    // Weight of the cover stock when it differs from the text.
     cover_gsm: Option<f64>,
-    // The document's own pages to print on the cover, when it is not
-    // blank: outside front, inside front, inside back, outside back.
+    // The document's own pages to print on the cover's outside, when it is
+    // not blank: front cover, then back cover.
     cover_source_pages: Option<Vec<u32>>,
 ) -> Result<BookletPlan, String> {
     print_calc::plan::booklet_plan(
@@ -229,6 +234,7 @@ fn build_booklet_plan(
         duplex_mode,
         sheet_is_landscape,
         gsm,
+        with_cover,
         cover_gsm,
         cover_source_pages,
     )
@@ -274,15 +280,15 @@ fn plan_sheets(
     plan: BookletPlan,
     trim_mm: (f64, f64),
     sheet_mm: (f64, f64),
-    cover_sheet_mm: Option<(f64, f64)>,
 ) -> Result<Vec<SheetSide>, String> {
-    pdf_ops::sheets::sheets_for_plan(&plan, trim_mm, sheet_mm, cover_sheet_mm)
+    pdf_ops::sheets::sheets_for_plan(&plan, trim_mm, sheet_mm)
 }
 
 /// Write the imposed, print-ready PDF arranged for the chosen binding.
 ///
-/// A cover on its own stock is a separate run through the printer, so it is
-/// written to `cover_output_path` rather than buried in the text file.
+/// One file for the whole job: the cover — when there is one — is sheet 1,
+/// a dedicated sheet whose back is blank, so it can be printed with the
+/// stack or pulled out and run separately on heavier stock.
 #[tauri::command]
 fn export_imposed_pdf(
     source_path: String,
@@ -291,8 +297,6 @@ fn export_imposed_pdf(
     sheet_mm: (f64, f64),
     output_path: String,
     marks: MarkOptions,
-    cover_sheet_mm: Option<(f64, f64)>,
-    cover_output_path: Option<String>,
 ) -> Result<u32, String> {
     let source = pdf_ops::document::inspect_pdf(&source_path)?;
     if source.modification_restricted {
@@ -304,18 +308,8 @@ fn export_imposed_pdf(
             plan.source_pages, source.page_count
         ));
     }
-    let sides = pdf_ops::sheets::sheets_for_plan(&plan, trim_mm, sheet_mm, cover_sheet_mm)?;
-
-    // A cover on different paper is a different run through the printer, so
-    // it goes to its own file rather than being buried inside the text one.
-    let (cover, text): (Vec<SheetSide>, Vec<SheetSide>) =
-        sides.into_iter().partition(|s| s.stock == "cover");
-    if !cover.is_empty() {
-        let path = cover_output_path
-            .ok_or("the cover is on its own stock, so it needs its own output file")?;
-        pdf_ops::impose::export_imposed(&source_path, &cover, &path, marks.clone())?;
-    }
-    pdf_ops::impose::export_imposed(&source_path, &text, &output_path, marks)
+    let sides = pdf_ops::sheets::sheets_for_plan(&plan, trim_mm, sheet_mm)?;
+    pdf_ops::impose::export_imposed(&source_path, &sides, &output_path, marks)
 }
 
 /// Reading order of the finished, bound document.
@@ -325,9 +319,30 @@ fn export_imposed_pdf(
 /// blank inserted to satisfy the binding's page-count rule.
 #[tauri::command]
 fn bound_reading_order(plan: BookletPlan) -> Vec<Option<u32>> {
-    (1..=plan.total_pages)
-        .map(|n| if n <= plan.source_pages { Some(n) } else { None })
-        .collect()
+    // Pages the cover took are not in the body; the reading order must skip
+    // them without leaving a hole, exactly as the imposition does.
+    let excluded: std::collections::HashSet<u32> =
+        plan.cover_source_pages.iter().copied().collect();
+    let body: Vec<Option<u32>> = (1..=plan.source_pages)
+        .filter(|p| !excluded.contains(p))
+        .map(Some)
+        .collect();
+    let blanks = (plan.total_pages as usize).saturating_sub(body.len());
+
+    let mut order = Vec::new();
+    // A cover carrying designated pages is part of what the reader holds:
+    // front cover first, blank inside faces, back cover last.
+    if !plan.cover_source_pages.is_empty() {
+        order.push(plan.cover_source_pages.first().copied());
+        order.push(None);
+    }
+    order.extend(body);
+    order.extend(std::iter::repeat_n(None, blanks));
+    if !plan.cover_source_pages.is_empty() {
+        order.push(None);
+        order.push(plan.cover_source_pages.get(1).copied());
+    }
+    order
 }
 
 // ---------------------------------------------------------------------------

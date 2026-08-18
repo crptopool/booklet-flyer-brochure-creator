@@ -107,6 +107,14 @@ pub struct SheetSide {
     /// mark against it is a crease the binder has to guess at.
     #[serde(default)]
     pub fold_y: Vec<f64>,
+    /// X positions (points) of cuts running top to bottom. A cut is not a
+    /// crease: the waste beyond it is removed, so the mark is drawn solid
+    /// where a fold is dashed.
+    #[serde(default)]
+    pub cut_x: Vec<f64>,
+    /// Y positions (points) of cuts running left to right.
+    #[serde(default)]
+    pub cut_y: Vec<f64>,
 }
 
 fn default_stock() -> String {
@@ -286,6 +294,25 @@ fn mark_operations(side: &SheetSide, marks: MarkOptions) -> Vec<Op> {
         ops.push(Op::new("d", vec![Object::Array(vec![]), 0.into()]));
     }
 
+    // Cut marks share the fold marks' switch — both are finishing guides —
+    // but are drawn solid and a little longer, because a cut is a different
+    // instruction from a crease and the person at the guillotine needs to
+    // tell them apart at a glance.
+    if marks.fold_marks {
+        for &cx in &side.cut_x {
+            ops.push(Op::new("m", vec![num(cx), num(0.0)]));
+            ops.push(Op::new("l", vec![num(cx), num(16.0)]));
+            ops.push(Op::new("m", vec![num(cx), num(side.height - 16.0)]));
+            ops.push(Op::new("l", vec![num(cx), num(side.height)]));
+        }
+        for &cy in &side.cut_y {
+            ops.push(Op::new("m", vec![num(0.0), num(cy)]));
+            ops.push(Op::new("l", vec![num(16.0), num(cy)]));
+            ops.push(Op::new("m", vec![num(side.width - 16.0), num(cy)]));
+            ops.push(Op::new("l", vec![num(side.width), num(cy)]));
+        }
+    }
+
     ops.push(Op::new("S", vec![]));
     ops.push(Op::new("Q", vec![]));
     ops
@@ -293,7 +320,13 @@ fn mark_operations(side: &SheetSide, marks: MarkOptions) -> Vec<Op> {
 
 /// Sheet label drawn in the trim waste at the foot of the sheet.
 fn label_operations(side: &SheetSide, font: &str) -> Vec<Op> {
-    let text = format!("Sheet {} — {}", side.sheet_number, side.side);
+    // The cover shares the file with the text sheets, so its label must not
+    // collide with "Sheet 1" of the text stock.
+    let text = if side.stock == "cover" {
+        format!("Cover sheet — {}", side.side)
+    } else {
+        format!("Sheet {} — {}", side.sheet_number, side.side)
+    };
     vec![
         Op::new("q", vec![]),
         Op::new("BT", vec![]),
@@ -404,8 +437,16 @@ pub fn export_imposed(
             ops.push(Op::new("Q", vec![]));
         }
 
+        // A deliberately empty side — the blank back of a cover sheet —
+        // stays truly blank: no label, because the label would print on the
+        // inside of the finished cover.
+        let truly_blank = side.placements.is_empty()
+            && side.fold_x.is_empty()
+            && side.fold_y.is_empty()
+            && side.cut_x.is_empty()
+            && side.cut_y.is_empty();
         ops.extend(mark_operations(side, marks));
-        if marks.sheet_labels {
+        if marks.sheet_labels && !truly_blank {
             ops.extend(label_operations(side, "SheetLabel"));
         }
 
@@ -542,6 +583,8 @@ mod tests {
             ],
             fold_x: vec![pw],
             fold_y: vec![],
+            cut_x: vec![],
+            cut_y: vec![],
             stock: default_stock(),
         }
     }
@@ -640,7 +683,8 @@ mod tests {
     fn trim_bounds_of_an_empty_side_is_none() {
         let side = SheetSide {
             sheet_number: 1, side: "front".into(), width: 100.0, height: 100.0,
-            placements: vec![], fold_x: vec![], fold_y: vec![], stock: default_stock(),
+            placements: vec![], fold_x: vec![], fold_y: vec![], cut_x: vec![], cut_y: vec![],
+            stock: default_stock(),
         };
         assert!(trim_bounds(&side).is_none());
     }

@@ -45,13 +45,16 @@ pub struct BookletPlan {
     pub folds_per_sheet: u32,
     /// True when the classic saddle-stitch printer-spread order applies.
     pub uses_printer_spreads: bool,
-    /// True when the cover is a separate wrap on its own stock.
+    /// True when the cover is a separate wrap: its own dedicated sheet,
+    /// printed on the outside only, folded around the text block.
     pub separate_cover: bool,
-    /// Pages carried by the cover wrap — 4, or 0 when there is no separate cover.
+    /// Positions the cover wrap has — 4 faces, or 0 when there is no
+    /// separate cover. Only the two outside faces are ever printed; the
+    /// inside of the wrap is always blank.
     pub cover_pages: u32,
-    /// The document's own pages placed on the cover, in wrap order
-    /// (outside front, inside front, inside back, outside back) — empty
-    /// when the cover is blank and carries none of the manuscript.
+    /// The document's own pages printed on the cover's outside, in order
+    /// (front cover, back cover) — empty when the cover is blank and
+    /// carries none of the manuscript.
     pub cover_source_pages: Vec<u32>,
     /// Pages in the text block, which is everything the cover does not carry.
     pub text_pages: u32,
@@ -81,12 +84,18 @@ pub fn booklet_plan(
     duplex_mode: DuplexMode,
     sheet_is_landscape: bool,
     gsm: f64,
+    // Whether the booklet gets a wrap-around cover as its own dedicated
+    // sheet. Independent of the paper: a cover on the same stock is still
+    // its own sheet, printed on the outside only.
+    with_cover: bool,
+    // Weight of the cover stock when it differs from the text; `None`
+    // means the cover prints on the same paper as everything else.
     cover_gsm: Option<f64>,
-    // The document's own pages to print on the cover, in wrap order
-    // (outside front, inside front, inside back, outside back). `None` or
-    // empty means the cover is blank and every source page stays in the
-    // text block; when given, must be exactly four distinct page numbers
-    // within `1..=source_pages`.
+    // The document's own pages to print on the cover's outside: front
+    // cover, then back cover. `None` or empty means the cover is blank
+    // and every source page stays in the text block; when given, must be
+    // exactly two distinct page numbers within `1..=source_pages`. The
+    // inside of the wrap is always blank either way.
     cover_source_pages: Option<Vec<u32>>,
 ) -> Result<BookletPlan, String> {
     if source_pages == 0 {
@@ -97,10 +106,10 @@ pub fn booklet_plan(
     }
     let cover_source_pages = cover_source_pages.unwrap_or_default();
     if !cover_source_pages.is_empty() {
-        if cover_source_pages.len() != 4 {
+        if cover_source_pages.len() != 2 {
             return Err(format!(
-                "a cover wrap has four positions (outside front, inside front, inside back, \
-                 outside back) — {} page(s) were given",
+                "the cover's outside has two printed faces (front cover, back cover) — \
+                 {} page(s) were given",
                 cover_source_pages.len()
             ));
         }
@@ -121,15 +130,17 @@ pub fn booklet_plan(
     let duplex = duplex_plan(duplex_mode, sheet_is_landscape);
     let is_duplex = duplex_mode != DuplexMode::Simplex;
 
-    // A separate cover is a wrap of its own: one folded sheet, on its own
-    // stock, bound around the text block. By default it carries none of the
-    // manuscript's pages — a plus cover is normally blank card stock, or
-    // carries separate artwork laid out on the Cover Creator screen — but
-    // the user may instead designate four of the document's own pages to
-    // print there, which pulls exactly those pages out of the text block.
-    // Only folded work wraps this way — a glued or punched cover is a
-    // different job, and the Cover Creator handles it.
-    let separate_cover = cover_gsm.is_some() && profile.folded;
+    // A separate cover is a wrap of its own: one dedicated sheet — the
+    // first of the job — printed on its outside only and folded around the
+    // text block. The paper is a free choice: same stock as the text or a
+    // heavier one, the geometry is identical either way. By default the
+    // wrap carries none of the manuscript's pages — a plus cover is
+    // normally blank card, or artwork laid out on the Cover Creator screen
+    // — but the user may instead designate the front and back cover from
+    // the document's own pages, which pulls exactly those out of the text
+    // block. Only folded work wraps this way — a glued or punched cover is
+    // a different job, and the Cover Creator handles it.
+    let separate_cover = with_cover && profile.folded;
     // Only take pages out of the body when there is actually somewhere for
     // them to go; an exclusion list supplied without a separate cover is
     // simply not acted on.
@@ -178,10 +189,21 @@ pub fn booklet_plan(
     let mut notes = Vec::new();
 
     if blanks > 0 {
+        // The rule applies to the body being folded, so when the cover has
+        // taken pages the message must count what is left — telling the
+        // user that 36 is not a multiple of 4 would be nonsense.
+        let counted = if cover_source_pages.is_empty() {
+            format!("{source_pages} pages")
+        } else {
+            format!(
+                "{body_pages} pages (after {} moved to the cover)",
+                cover_source_pages.len()
+            )
+        };
         notes.push(note(
             "WARNING",
             format!(
-                "{source_pages} pages is not a multiple of {} for {} — {blanks} blank page(s) must be added. \
+                "{counted} is not a multiple of {} for {} — {blanks} blank page(s) must be added. \
                  Choose where they go; pages are never added silently.",
                 profile.page_count_rule.multiple(),
                 profile.name
@@ -304,44 +326,57 @@ pub fn booklet_plan(
     }
 
     if separate_cover {
-        let cover = cover_gsm.unwrap_or(gsm);
         if cover_source_pages.is_empty() {
             notes.push(note(
                 "INFO",
-                format!(
-                    "The cover is a separate wrap: one blank sheet at {cover:.0} GSM, printed \
-                     separately from the {text_pages} pages of text at {gsm:.0} GSM. It does not \
-                     use any of the manuscript's pages — add cover artwork separately, for \
-                     example on the Cover Creator screen, and print it on the cover stock."
-                ),
+                "The cover is sheet 1 of the job: printed on its outside only, inside blank. \
+                 None of the manuscript's pages go on it — the sheet carries cut and fold \
+                 marks so you know where to trim your card or pre-printed cover.",
             ));
         } else {
             notes.push(note(
                 "INFO",
                 format!(
-                    "The cover is a separate wrap: one sheet at {cover:.0} GSM carrying pages \
-                     {}, printed separately from the {text_pages} remaining pages of text at \
-                     {gsm:.0} GSM. Those {} pages are removed from the text block, not \
-                     duplicated in it.",
+                    "The cover is sheet 1 of the job: page {} as the front cover and page {} as \
+                     the back, side by side on the outside; the inside is blank. Those 2 pages \
+                     are removed from the {text_pages}-page text block, not duplicated in it.",
+                    cover_source_pages[0],
                     cover_source_pages
-                        .iter()
-                        .map(u32::to_string)
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    cover_source_pages.len()
+                        .get(1)
+                        .copied()
+                        .unwrap_or(cover_source_pages[0]),
                 ),
             ));
         }
-        if cover <= gsm {
-            notes.push(note(
+        match cover_gsm {
+            Some(cover) => {
+                notes.push(note(
+                    "INFO",
+                    format!(
+                        "The cover stock differs: feed one sheet of {cover:.0} GSM for sheet 1, \
+                         or print sheet 1 as its own run on the cover stock; the text prints on \
+                         {gsm:.0} GSM."
+                    ),
+                ));
+                if cover <= gsm {
+                    notes.push(note(
+                        "INFO",
+                        format!(
+                            "The cover stock ({cover:.0} GSM) is no heavier than the text \
+                             ({gsm:.0} GSM). A cover is usually the heavier of the two."
+                        ),
+                    ));
+                }
+            }
+            None => notes.push(note(
                 "INFO",
                 format!(
-                    "The cover stock ({cover:.0} GSM) is no heavier than the text ({gsm:.0} GSM). \
-                     A cover is usually the heavier of the two."
+                    "The cover prints on the same {gsm:.0} GSM paper as the text, so the whole \
+                     job runs as one stack — sheet 1 simply comes out with a blank back."
                 ),
-            ));
+            )),
         }
-    } else if cover_gsm.is_some() && !profile.folded {
+    } else if with_cover && !profile.folded {
         notes.push(note(
             "INFO",
             format!(
@@ -407,7 +442,7 @@ mod tests {
     use super::*;
 
     fn plan(binding: BindingType, pages: u32, per_side: u32, mode: DuplexMode, landscape: bool) -> BookletPlan {
-        booklet_plan(binding, pages, per_side, mode, landscape, 80.0, None, None).unwrap()
+        booklet_plan(binding, pages, per_side, mode, landscape, 80.0, false, None, None).unwrap()
     }
 
     /// Designating cover pages pulls exactly those out of the body, and the
@@ -417,54 +452,58 @@ mod tests {
     fn designated_cover_pages_are_removed_from_the_body() {
         let p = booklet_plan(
             BindingType::SaddleStitch,
+            26,
+            2,
+            DuplexMode::ShortEdge,
+            true,
+            80.0,
+            true,
+            Some(200.0),
+            Some(vec![1, 26]),
+        )
+        .unwrap();
+        assert_eq!(p.cover_source_pages, vec![1, 26]);
+        assert_eq!(p.text_pages, 24, "26 supplied minus 2 on the cover");
+        assert_eq!(p.blanks_needed, 0);
+        assert!(p.notes.iter().any(|n| {
+            n.message.contains("page 1 as the front cover") && n.message.contains("page 26 as the back")
+        }));
+    }
+
+    /// The blank rule applies to the body, not to the document as a whole:
+    /// a multiple-of-four document stops being one when the cover takes
+    /// two of its pages.
+    #[test]
+    fn the_blank_rule_is_checked_against_the_body_not_the_document() {
+        // 24 pages total; removing 2 for the cover leaves 22, which is not
+        // a multiple of 4 — so 2 blanks are expected, not a blanks count
+        // computed against 24.
+        let p = booklet_plan(
+            BindingType::SaddleStitch,
             24,
             2,
             DuplexMode::ShortEdge,
             true,
             80.0,
-            Some(200.0),
-            Some(vec![1, 2, 23, 24]),
-        )
-        .unwrap();
-        assert_eq!(p.cover_source_pages, vec![1, 2, 23, 24]);
-        assert_eq!(p.text_pages, 20, "24 supplied minus 4 on the cover");
-        assert_eq!(p.blanks_needed, 0);
-        assert!(p.notes.iter().any(|n| n.message.contains("carrying pages 1, 2, 23, 24")));
-    }
-
-    /// A page count that only becomes a multiple of four after the cover's
-    /// pages are removed must not be flagged as needing blanks — the rule
-    /// applies to the body, not to the document as a whole.
-    #[test]
-    fn the_blank_rule_is_checked_against_the_body_not_the_document() {
-        // 22 pages total; removing 4 for the cover leaves 18, which is not
-        // a multiple of 4 either — so 2 blanks are expected, not a blanks
-        // count computed against 22.
-        let p = booklet_plan(
-            BindingType::SaddleStitch,
-            22,
-            2,
-            DuplexMode::ShortEdge,
             true,
-            80.0,
             Some(200.0),
-            Some(vec![1, 2, 21, 22]),
+            Some(vec![1, 24]),
         )
         .unwrap();
-        assert_eq!(p.text_pages, 20, "18 body pages padded to the next multiple of 4");
+        assert_eq!(p.text_pages, 24, "22 body pages padded to the next multiple of 4");
         assert_eq!(p.blanks_needed, 2);
     }
 
-    /// Four page numbers are required — not two, not zero-through-error —
-    /// because the wrap always has four physical positions.
+    /// Two page numbers are required — front cover and back cover — because
+    /// only the outside of the wrap is printed; its inside is always blank.
     #[test]
-    fn cover_pages_must_be_exactly_four() {
+    fn cover_pages_must_be_exactly_two() {
         let err = booklet_plan(
-            BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, Some(200.0),
-            Some(vec![1, 20]),
+            BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, true, Some(200.0),
+            Some(vec![1, 2, 19, 20]),
         )
         .unwrap_err();
-        assert!(err.contains("four positions"), "{err}");
+        assert!(err.contains("two printed faces"), "{err}");
     }
 
     /// A page outside the document, or repeated, is refused before any
@@ -472,32 +511,66 @@ mod tests {
     #[test]
     fn cover_pages_must_be_real_and_distinct() {
         let out_of_range = booklet_plan(
-            BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, Some(200.0),
-            Some(vec![1, 2, 19, 21]),
+            BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, true, Some(200.0),
+            Some(vec![1, 21]),
         )
         .unwrap_err();
         assert!(out_of_range.contains("outside the document"), "{out_of_range}");
 
         let repeated = booklet_plan(
-            BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, Some(200.0),
-            Some(vec![1, 1, 19, 20]),
+            BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, true, Some(200.0),
+            Some(vec![5, 5]),
         )
         .unwrap_err();
         assert!(repeated.contains("cannot be on the cover twice"), "{repeated}");
     }
 
-    /// Designating cover pages without an actual separate cover (no GSM
-    /// given) is quietly ignored rather than mysteriously shrinking the body.
+    /// Designating cover pages without asking for a cover at all is quietly
+    /// ignored rather than mysteriously shrinking the body.
     #[test]
     fn cover_pages_are_ignored_without_a_separate_cover() {
         let p = booklet_plan(
-            BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, None,
-            Some(vec![1, 2, 19, 20]),
+            BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, false, None,
+            Some(vec![1, 20]),
         )
         .unwrap();
         assert!(!p.separate_cover);
         assert!(p.cover_source_pages.is_empty());
         assert_eq!(p.text_pages, 20);
+    }
+
+    /// The cover no longer depends on a different paper: the same stock
+    /// still gets a dedicated cover sheet, and the plan says the job can
+    /// run as one stack.
+    #[test]
+    fn a_cover_on_the_same_stock_is_still_its_own_sheet() {
+        let p = booklet_plan(
+            BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, true, None, None,
+        )
+        .unwrap();
+        assert!(p.separate_cover);
+        assert_eq!(p.cover_gsm, None, "same stock — no separate weight");
+        assert_eq!(p.cover_sheet_count, 1);
+        assert_eq!(p.sheet_count, 6, "five text sheets plus the cover");
+        assert!(p.notes.iter().any(|n| n.message.contains("same 80 GSM paper")));
+    }
+
+    /// A different weight is a stock note, not a geometry change: the sheet
+    /// counts match the same-stock case exactly.
+    #[test]
+    fn a_different_cover_weight_only_changes_the_stock_note() {
+        let same = booklet_plan(
+            BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, true, None, None,
+        )
+        .unwrap();
+        let heavier = booklet_plan(
+            BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, true, Some(200.0), None,
+        )
+        .unwrap();
+        assert_eq!(same.sheet_count, heavier.sheet_count);
+        assert_eq!(same.text_sheet_count, heavier.text_sheet_count);
+        assert_eq!(heavier.cover_gsm, Some(200.0));
+        assert!(heavier.notes.iter().any(|n| n.message.contains("feed one sheet of 200 GSM")));
     }
 
     /// 36 pages at 4 per side satisfies "multiple of 4" but still leaves
@@ -641,7 +714,7 @@ mod tests {
 
     #[test]
     fn invalid_inputs_error() {
-        assert!(booklet_plan(BindingType::Perfect, 0, 2, DuplexMode::LongEdge, false, 80.0, None, None).is_err());
-        assert!(booklet_plan(BindingType::Perfect, 10, 0, DuplexMode::LongEdge, false, 80.0, None, None).is_err());
+        assert!(booklet_plan(BindingType::Perfect, 0, 2, DuplexMode::LongEdge, false, 80.0, false, None, None).is_err());
+        assert!(booklet_plan(BindingType::Perfect, 10, 0, DuplexMode::LongEdge, false, 80.0, false, None, None).is_err());
     }
 }
