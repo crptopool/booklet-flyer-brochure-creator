@@ -217,6 +217,7 @@ fn build_booklet_plan(
     duplex_mode: DuplexMode,
     sheet_is_landscape: bool,
     gsm: f64,
+    cover_gsm: Option<f64>,
 ) -> Result<BookletPlan, String> {
     print_calc::plan::booklet_plan(
         binding,
@@ -225,6 +226,7 @@ fn build_booklet_plan(
         duplex_mode,
         sheet_is_landscape,
         gsm,
+        cover_gsm,
     )
 }
 
@@ -268,11 +270,15 @@ fn plan_sheets(
     plan: BookletPlan,
     trim_mm: (f64, f64),
     sheet_mm: (f64, f64),
+    cover_sheet_mm: Option<(f64, f64)>,
 ) -> Result<Vec<SheetSide>, String> {
-    pdf_ops::sheets::sheets_for_plan(&plan, trim_mm, sheet_mm)
+    pdf_ops::sheets::sheets_for_plan(&plan, trim_mm, sheet_mm, cover_sheet_mm)
 }
 
 /// Write the imposed, print-ready PDF arranged for the chosen binding.
+///
+/// A cover on its own stock is a separate run through the printer, so it is
+/// written to `cover_output_path` rather than buried in the text file.
 #[tauri::command]
 fn export_imposed_pdf(
     source_path: String,
@@ -281,6 +287,8 @@ fn export_imposed_pdf(
     sheet_mm: (f64, f64),
     output_path: String,
     marks: MarkOptions,
+    cover_sheet_mm: Option<(f64, f64)>,
+    cover_output_path: Option<String>,
 ) -> Result<u32, String> {
     let source = pdf_ops::document::inspect_pdf(&source_path)?;
     if source.modification_restricted {
@@ -292,8 +300,18 @@ fn export_imposed_pdf(
             plan.source_pages, source.page_count
         ));
     }
-    let sides = pdf_ops::sheets::sheets_for_plan(&plan, trim_mm, sheet_mm)?;
-    pdf_ops::impose::export_imposed(&source_path, &sides, &output_path, marks)
+    let sides = pdf_ops::sheets::sheets_for_plan(&plan, trim_mm, sheet_mm, cover_sheet_mm)?;
+
+    // A cover on different paper is a different run through the printer, so
+    // it goes to its own file rather than being buried inside the text one.
+    let (cover, text): (Vec<SheetSide>, Vec<SheetSide>) =
+        sides.into_iter().partition(|s| s.stock == "cover");
+    if !cover.is_empty() {
+        let path = cover_output_path
+            .ok_or("the cover is on its own stock, so it needs its own output file")?;
+        pdf_ops::impose::export_imposed(&source_path, &cover, &path, marks.clone())?;
+    }
+    pdf_ops::impose::export_imposed(&source_path, &text, &output_path, marks)
 }
 
 /// Reading order of the finished, bound document.

@@ -45,6 +45,18 @@ pub struct BookletPlan {
     pub folds_per_sheet: u32,
     /// True when the classic saddle-stitch printer-spread order applies.
     pub uses_printer_spreads: bool,
+    /// True when the cover is a separate wrap on its own stock.
+    pub separate_cover: bool,
+    /// Pages carried by the cover wrap — 4, or 0 when there is no separate cover.
+    pub cover_pages: u32,
+    /// Pages in the text block, which is everything the cover does not carry.
+    pub text_pages: u32,
+    /// Sheets of text stock.
+    pub text_sheet_count: u32,
+    /// Sheets of cover stock: one wrap, or none.
+    pub cover_sheet_count: u32,
+    /// Weight of the cover stock, when it differs from the text.
+    pub cover_gsm: Option<f64>,
     /// Spine width in mm, when the binding has a spine.
     pub spine_width_mm: Option<f64>,
     /// Approximate caliper used for the spine calculation.
@@ -65,6 +77,7 @@ pub fn booklet_plan(
     duplex_mode: DuplexMode,
     sheet_is_landscape: bool,
     gsm: f64,
+    cover_gsm: Option<f64>,
 ) -> Result<BookletPlan, String> {
     if source_pages == 0 {
         return Err("page count must be positive".into());
@@ -81,7 +94,17 @@ pub fn booklet_plan(
     let total_pages = source_pages + blanks;
 
     let pages_per_sheet = pages_per_side * if is_duplex { 2 } else { 1 };
-    let sheet_count = total_pages.div_ceil(pages_per_sheet);
+
+    // A separate cover is a wrap of its own: one folded sheet carrying the
+    // outer four pages, with the text block bound inside it. Only folded
+    // work wraps this way — a glued or punched cover is a different job,
+    // and the Cover Creator handles it.
+    let separate_cover = cover_gsm.is_some() && profile.folded && total_pages >= 8;
+    let cover_pages = if separate_cover { 4 } else { 0 };
+    let text_pages = total_pages - cover_pages;
+    let text_sheet_count = text_pages.div_ceil(pages_per_sheet);
+    let cover_sheet_count = u32::from(separate_cover);
+    let sheet_count = text_sheet_count + cover_sheet_count;
 
     // A folded binding gains one fold each time the pages-per-side
     // doubles: 2-up duplex is a single fold, 4-up duplex folds twice.
@@ -119,7 +142,7 @@ pub fn booklet_plan(
                 profile.name
             ),
         ));
-    } else if sheet_count * pages_per_sheet == total_pages {
+    } else if text_sheet_count * pages_per_sheet == text_pages {
         // Only claim a clean fit when the sheets also come out full — the
         // binding rule alone does not guarantee that.
         notes.push(note(
@@ -221,15 +244,54 @@ pub fn booklet_plan(
     // whole story: the sheets must also come out full. 36 pages satisfies
     // "multiple of 4" yet still leaves four empty positions at 8 pages per
     // sheet, and saying "no blanks needed" there would be wrong.
-    let sheet_capacity = sheet_count * pages_per_sheet;
-    if sheet_capacity > total_pages {
-        let short = sheet_capacity - total_pages;
+    let sheet_capacity = text_sheet_count * pages_per_sheet;
+    if sheet_capacity > text_pages {
+        let short = sheet_capacity - text_pages;
+        let what = if separate_cover { "text sheets hold" } else { "sheets hold" };
         notes.push(note(
             "WARNING",
             format!(
-                "{sheet_count} sheets hold {sheet_capacity} pages, so {short} position(s) are left \
-                 empty by {total_pages} pages. Add {short} blank page(s), or change the pages per \
+                "{text_sheet_count} {what} {sheet_capacity} pages, so {short} position(s) are left \
+                 empty by {text_pages} pages. Add {short} blank page(s), or change the pages per \
                  side so the sheets come out full."
+            ),
+        ));
+    }
+
+    if separate_cover {
+        let cover = cover_gsm.unwrap_or(gsm);
+        notes.push(note(
+            "INFO",
+            format!(
+                "The cover is a separate wrap: one sheet at {cover:.0} GSM carrying pages 1, 2, \
+                 {} and {total_pages}, with {text_pages} pages of text at {gsm:.0} GSM bound \
+                 inside it. The two go through the printer as separate runs.",
+                total_pages - 1
+            ),
+        ));
+        if cover <= gsm {
+            notes.push(note(
+                "INFO",
+                format!(
+                    "The cover stock ({cover:.0} GSM) is no heavier than the text ({gsm:.0} GSM). \
+                     A cover is usually the heavier of the two."
+                ),
+            ));
+        }
+    } else if cover_gsm.is_some() && profile.folded && total_pages < 8 {
+        notes.push(note(
+            "WARNING",
+            "A separate cover wrap needs at least 8 pages: 4 for the cover and 4 for the text \
+             block. This job is being planned with the cover on the same stock."
+                .to_string(),
+        ));
+    } else if cover_gsm.is_some() && !profile.folded {
+        notes.push(note(
+            "INFO",
+            format!(
+                "{} does not wrap a folded cover — its cover is a separate component. Lay it out \
+                 on the Cover Creator screen.",
+                profile.name
             ),
         ));
     }
@@ -258,6 +320,12 @@ pub fn booklet_plan(
         sheet_count,
         folds_per_sheet,
         uses_printer_spreads,
+        separate_cover,
+        cover_pages,
+        text_pages,
+        text_sheet_count,
+        cover_sheet_count,
+        cover_gsm: if separate_cover { cover_gsm } else { None },
         spine_width_mm,
         caliper_mm: caliper,
         notes,
@@ -277,7 +345,7 @@ mod tests {
     use super::*;
 
     fn plan(binding: BindingType, pages: u32, per_side: u32, mode: DuplexMode, landscape: bool) -> BookletPlan {
-        booklet_plan(binding, pages, per_side, mode, landscape, 80.0).unwrap()
+        booklet_plan(binding, pages, per_side, mode, landscape, 80.0, None).unwrap()
     }
 
     /// 36 pages at 4 per side satisfies "multiple of 4" but still leaves
@@ -421,7 +489,7 @@ mod tests {
 
     #[test]
     fn invalid_inputs_error() {
-        assert!(booklet_plan(BindingType::Perfect, 0, 2, DuplexMode::LongEdge, false, 80.0).is_err());
-        assert!(booklet_plan(BindingType::Perfect, 10, 0, DuplexMode::LongEdge, false, 80.0).is_err());
+        assert!(booklet_plan(BindingType::Perfect, 0, 2, DuplexMode::LongEdge, false, 80.0, None).is_err());
+        assert!(booklet_plan(BindingType::Perfect, 10, 0, DuplexMode::LongEdge, false, 80.0, None).is_err());
     }
 }

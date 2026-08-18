@@ -6,7 +6,9 @@
 
 use crate::pdf_ops::impose::{Placement, SheetSide};
 use crate::print_calc::booklet::saddle_stitch_order;
-use crate::print_calc::fold::{cell_size, folded_grid, nested_signature_pages, signature_slots};
+use crate::print_calc::fold::{
+    cell_size, folded_grid, nested_signature_pages, page_or_blank, signature_slots,
+};
 use crate::print_calc::imposition::{grid_placements, sequential_nup};
 use crate::print_calc::plan::BookletPlan;
 use crate::print_calc::units::mm_to_points;
@@ -29,25 +31,30 @@ fn grid_for(pages_per_side: u32) -> Result<(u32, u32), String> {
     }
 }
 
-/// Sheet sides for folded work, imposed by simulating the folds.
+/// Impose one folded signature onto the two sides of a sheet.
 ///
-/// Works for any grid the chosen papers produce, so the numbering follows
-/// the configuration rather than a table of one remembered case.
-fn folded_sheets(
-    plan: &BookletPlan,
-    trim_mm: (f64, f64),
+/// Shared by the text block and by a separate cover wrap, which differ only
+/// in their paper and in which pages they carry.
+#[allow(clippy::too_many_arguments)]
+fn signature_sides(
+    pages: &[Option<u32>],
+    pages_per_side: u32,
     sheet_mm: (f64, f64),
+    trim_mm: (f64, f64),
+    invert_back: bool,
+    sheet_no: u32,
+    stock: &str,
 ) -> Result<Vec<SheetSide>, String> {
-    if plan.pages_per_sheet <= plan.pages_per_side {
+    let grid = folded_grid(pages_per_side, sheet_mm, trim_mm)?;
+    let (rows, cols) = (grid.rows, grid.cols);
+    let slots = signature_slots(rows, cols, invert_back, grid.spine)?;
+    if pages.len() != slots.len() {
         return Err(format!(
-            "{} folds its sheets, so both sides carry pages — choose double-sided printing.",
-            plan.profile.name
+            "a {rows} × {cols} signature holds {} pages, not {}",
+            slots.len(),
+            pages.len()
         ));
     }
-    let grid = folded_grid(plan.pages_per_side, sheet_mm, trim_mm)?;
-    let (rows, cols) = (grid.rows, grid.cols);
-    let invert_back = plan.duplex.back_side_inverted;
-    let slots = signature_slots(rows, cols, invert_back, grid.spine)?;
 
     // Pages turned on their side take the cell the other way round, and every
     // page carries the same quarter turn on top of the fold's own rotation.
@@ -61,47 +68,101 @@ fn folded_sheets(
     let cell_h = mm_to_points(cell_mm_h);
     let sheet_w = mm_to_points(sheet_mm.0);
     let sheet_h = mm_to_points(sheet_mm.1);
-    let per_sheet = plan.pages_per_sheet;
-    // Every sheet is filled, so the document is padded to the sheets it needs.
-    let capacity = plan.sheet_count * per_sheet;
 
-    let mut result = Vec::with_capacity(plan.sheet_count as usize * 2);
-    for sheet_no in 1..=plan.sheet_count {
-        let pages = nested_signature_pages(capacity, per_sheet, sheet_no, plan.source_pages)?;
-
-        for back in [false, true] {
-            // Lay the signature's pages into this side's grid.
-            let mut cells = vec![None; (rows * cols) as usize];
-            let mut rotations = vec![0i64; (rows * cols) as usize];
-            for (i, slot) in slots.iter().enumerate() {
-                if slot.back != back {
-                    continue;
-                }
-                let index = (slot.row * cols + slot.col) as usize;
-                cells[index] = pages[i];
-                rotations[index] = (slot.rotation + turn) % 360;
+    let mut out = Vec::with_capacity(2);
+    for back in [false, true] {
+        let mut cells = vec![None; (rows * cols) as usize];
+        let mut rotations = vec![0i64; (rows * cols) as usize];
+        for (i, slot) in slots.iter().enumerate() {
+            if slot.back != back {
+                continue;
             }
-
-            let side_name = if back { "back" } else { "front" };
-            let layout = grid_placements(
-                &cells, rows, cols, sheet_w, sheet_h, cell_w, cell_h, 0.0, sheet_no, side_name,
-            )?;
-
-            result.push(SheetSide {
-                sheet_number: sheet_no,
-                side: side_name.to_string(),
-                width: sheet_w,
-                height: sheet_h,
-                placements: layout
-                    .cells
-                    .iter()
-                    .zip(rotations.iter())
-                    .map(|(cell, rotation)| Placement::from_cell(cell, *rotation))
-                    .collect(),
-                fold_x: creases(cols, sheet_w, cell_w),
-                fold_y: creases(rows, sheet_h, cell_h),
-            });
+            let index = (slot.row * cols + slot.col) as usize;
+            cells[index] = pages[i];
+            rotations[index] = (slot.rotation + turn) % 360;
         }
+
+        let side_name = if back { "back" } else { "front" };
+        let layout = grid_placements(
+            &cells, rows, cols, sheet_w, sheet_h, cell_w, cell_h, 0.0, sheet_no, side_name,
+        )?;
+
+        out.push(SheetSide {
+            sheet_number: sheet_no,
+            side: side_name.to_string(),
+            stock: stock.to_string(),
+            width: sheet_w,
+            height: sheet_h,
+            placements: layout
+                .cells
+                .iter()
+                .zip(rotations.iter())
+                .map(|(cell, rotation)| Placement::from_cell(cell, *rotation))
+                .collect(),
+            fold_x: creases(cols, sheet_w, cell_w),
+            fold_y: creases(rows, sheet_h, cell_h),
+        });
+    }
+    Ok(out)
+}
+
+/// Sheet sides for folded work, imposed by simulating the folds.
+///
+/// Works for any grid the chosen papers produce, so the numbering follows
+/// the configuration rather than a table of one remembered case.
+fn folded_sheets(
+    plan: &BookletPlan,
+    trim_mm: (f64, f64),
+    sheet_mm: (f64, f64),
+    cover_sheet_mm: Option<(f64, f64)>,
+) -> Result<Vec<SheetSide>, String> {
+    if plan.pages_per_sheet <= plan.pages_per_side {
+        return Err(format!(
+            "{} folds its sheets, so both sides carry pages — choose double-sided printing.",
+            plan.profile.name
+        ));
+    }
+    let invert_back = plan.duplex.back_side_inverted;
+    let mut result = Vec::new();
+
+    // A separate cover is its own wrap on its own paper: one sheet, one
+    // fold, carrying the outer four pages, with the text block bound inside
+    // it. It is imposed first and independently of the text.
+    if plan.separate_cover {
+        let cover_sheet = cover_sheet_mm.unwrap_or(sheet_mm);
+        let last = plan.total_pages;
+        let wrap: Vec<Option<u32>> = [1, 2, last - 1, last]
+            .iter()
+            .map(|&n| page_or_blank(n, plan.source_pages))
+            .collect();
+        result.extend(
+            signature_sides(&wrap, 2, cover_sheet, trim_mm, invert_back, 1, "cover")
+                .map_err(|e| format!("The cover sheet cannot be imposed: {e}"))?,
+        );
+    }
+
+    // A separate cover has already taken pages 1 and 2, so the text block
+    // starts at page 3 and carries its own numbering offset by that much.
+    let offset = if plan.separate_cover { 2 } else { 0 };
+    let per_sheet = plan.pages_per_sheet;
+    // Every sheet is filled, so the block is padded to the sheets it needs.
+    let capacity = plan.text_sheet_count * per_sheet;
+
+    for sheet_no in 1..=plan.text_sheet_count {
+        let block = nested_signature_pages(capacity, per_sheet, sheet_no, plan.text_pages)?;
+        let pages: Vec<Option<u32>> = block
+            .into_iter()
+            .map(|p| p.and_then(|n| page_or_blank(n + offset, plan.source_pages)))
+            .collect();
+        result.extend(signature_sides(
+            &pages,
+            plan.pages_per_side,
+            sheet_mm,
+            trim_mm,
+            invert_back,
+            sheet_no,
+            "text",
+        )?);
     }
     Ok(result)
 }
@@ -124,6 +185,7 @@ pub fn sheets_for_plan(
     plan: &BookletPlan,
     trim_mm: (f64, f64),
     sheet_mm: (f64, f64),
+    cover_sheet_mm: Option<(f64, f64)>,
 ) -> Result<Vec<SheetSide>, String> {
     if trim_mm.0 <= 0.0 || trim_mm.1 <= 0.0 || sheet_mm.0 <= 0.0 || sheet_mm.1 <= 0.0 {
         return Err("page and sheet sizes must be positive".into());
@@ -132,7 +194,7 @@ pub fn sheets_for_plan(
     // Folded work is imposed by folding the sheet in software, which covers
     // every grid the chosen papers allow rather than one remembered case.
     if plan.profile.folded {
-        return folded_sheets(plan, trim_mm, sheet_mm);
+        return folded_sheets(plan, trim_mm, sheet_mm, cover_sheet_mm);
     }
 
     let (rows, cols) = grid_for(plan.pages_per_side)?;
@@ -176,6 +238,7 @@ pub fn sheets_for_plan(
         result.push(SheetSide {
             sheet_number: sheet_no,
             side: side_name,
+            stock: "text".to_string(),
             width: sheet_w,
             height: sheet_h,
             placements: layout
@@ -202,11 +265,12 @@ mod tests {
     const A4: (f64, f64) = (210.0, 297.0);
     const A6: (f64, f64) = (105.0, 148.0);
     const A3: (f64, f64) = (297.0, 420.0);
+    const A5_LANDSCAPE: (f64, f64) = (210.0, 148.0);
 
     #[test]
     fn saddle_stitch_produces_printer_spreads() {
-        let plan = booklet_plan(BindingType::SaddleStitch, 8, 2, DuplexMode::ShortEdge, true, 80.0).unwrap();
-        let sides = sheets_for_plan(&plan, A5, A4_LANDSCAPE).unwrap();
+        let plan = booklet_plan(BindingType::SaddleStitch, 8, 2, DuplexMode::ShortEdge, true, 80.0, None).unwrap();
+        let sides = sheets_for_plan(&plan, A5, A4_LANDSCAPE, None).unwrap();
         assert_eq!(sides.len(), 4);
         // Spec example: sheet 1 front is 8 | 1, back is 2 | 7.
         let pages = |s: &SheetSide| s.placements.iter().map(|p| p.page).collect::<Vec<_>>();
@@ -218,8 +282,8 @@ mod tests {
 
     #[test]
     fn every_page_is_placed_exactly_once() {
-        let plan = booklet_plan(BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0).unwrap();
-        let sides = sheets_for_plan(&plan, A5, A4_LANDSCAPE).unwrap();
+        let plan = booklet_plan(BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, None).unwrap();
+        let sides = sheets_for_plan(&plan, A5, A4_LANDSCAPE, None).unwrap();
         let mut seen: Vec<u32> = sides
             .iter()
             .flat_map(|s| s.placements.iter().filter_map(|p| p.page))
@@ -230,8 +294,8 @@ mod tests {
 
     #[test]
     fn cells_are_centred_and_side_by_side() {
-        let plan = booklet_plan(BindingType::SaddleStitch, 4, 2, DuplexMode::ShortEdge, true, 80.0).unwrap();
-        let sides = sheets_for_plan(&plan, A5, A4_LANDSCAPE).unwrap();
+        let plan = booklet_plan(BindingType::SaddleStitch, 4, 2, DuplexMode::ShortEdge, true, 80.0, None).unwrap();
+        let sides = sheets_for_plan(&plan, A5, A4_LANDSCAPE, None).unwrap();
         let cells = &sides[0].placements;
         assert_eq!(cells.len(), 2);
         // Two A5 cells on an A4 landscape sheet leave a 1 mm total margin.
@@ -241,8 +305,8 @@ mod tests {
 
     #[test]
     fn fold_line_sits_on_the_centre_of_the_sheet() {
-        let plan = booklet_plan(BindingType::SaddleStitch, 4, 2, DuplexMode::ShortEdge, true, 80.0).unwrap();
-        let sides = sheets_for_plan(&plan, A5, A4_LANDSCAPE).unwrap();
+        let plan = booklet_plan(BindingType::SaddleStitch, 4, 2, DuplexMode::ShortEdge, true, 80.0, None).unwrap();
+        let sides = sheets_for_plan(&plan, A5, A4_LANDSCAPE, None).unwrap();
         assert_eq!(sides[0].fold_x.len(), 1);
         assert!((sides[0].fold_x[0] - mm_to_points(148.5)).abs() < 1e-6);
     }
@@ -250,23 +314,23 @@ mod tests {
     #[test]
     fn back_sides_carry_the_duplex_rotation() {
         // Long-edge flip on a landscape sheet inverts the back.
-        let plan = booklet_plan(BindingType::SaddleStitch, 8, 2, DuplexMode::LongEdge, true, 80.0).unwrap();
-        let sides = sheets_for_plan(&plan, A5, A4_LANDSCAPE).unwrap();
+        let plan = booklet_plan(BindingType::SaddleStitch, 8, 2, DuplexMode::LongEdge, true, 80.0, None).unwrap();
+        let sides = sheets_for_plan(&plan, A5, A4_LANDSCAPE, None).unwrap();
         assert_eq!(sides[0].placements[0].rotation, 0);
         assert_eq!(sides[1].placements[0].rotation, 180);
     }
 
     #[test]
     fn correct_flip_needs_no_rotation() {
-        let plan = booklet_plan(BindingType::SaddleStitch, 8, 2, DuplexMode::ShortEdge, true, 80.0).unwrap();
-        let sides = sheets_for_plan(&plan, A5, A4_LANDSCAPE).unwrap();
+        let plan = booklet_plan(BindingType::SaddleStitch, 8, 2, DuplexMode::ShortEdge, true, 80.0, None).unwrap();
+        let sides = sheets_for_plan(&plan, A5, A4_LANDSCAPE, None).unwrap();
         assert!(sides.iter().all(|s| s.placements.iter().all(|p| p.rotation == 0)));
     }
 
     #[test]
     fn perfect_binding_keeps_reading_order_one_per_side() {
-        let plan = booklet_plan(BindingType::Perfect, 4, 1, DuplexMode::LongEdge, false, 80.0).unwrap();
-        let sides = sheets_for_plan(&plan, A4, A4).unwrap();
+        let plan = booklet_plan(BindingType::Perfect, 4, 1, DuplexMode::LongEdge, false, 80.0, None).unwrap();
+        let sides = sheets_for_plan(&plan, A4, A4, None).unwrap();
         assert_eq!(sides.len(), 4);
         let pages: Vec<_> = sides.iter().map(|s| s.placements[0].page).collect();
         assert_eq!(pages, vec![Some(1), Some(2), Some(3), Some(4)]);
@@ -278,11 +342,93 @@ mod tests {
 
     #[test]
     fn spiral_simplex_puts_one_page_on_each_sheet_front() {
-        let plan = booklet_plan(BindingType::Spiral, 3, 1, DuplexMode::Simplex, false, 80.0).unwrap();
-        let sides = sheets_for_plan(&plan, A4, A4).unwrap();
+        let plan = booklet_plan(BindingType::Spiral, 3, 1, DuplexMode::Simplex, false, 80.0, None).unwrap();
+        let sides = sheets_for_plan(&plan, A4, A4, None).unwrap();
         assert_eq!(sides.len(), 3);
         assert!(sides.iter().all(|s| s.side == "front"));
         assert!(sides.iter().all(|s| s.fold_x.is_empty()));
+    }
+
+    /// The user's case: a 200 gsm A5 cover wrapping an A6 booklet whose text
+    /// is imposed two-up on A4 landscape. The cover is its own sheet, at its
+    /// own size, carrying only the outer four pages.
+    #[test]
+    fn a_separate_cover_is_its_own_sheet_at_its_own_size() {
+        let plan =
+            booklet_plan(BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, Some(200.0))
+                .unwrap();
+        assert!(plan.separate_cover);
+        assert_eq!(plan.cover_pages, 4);
+        assert_eq!(plan.text_pages, 16);
+        assert_eq!(plan.text_sheet_count, 4);
+        assert_eq!(plan.sheet_count, 5, "four text sheets inside one cover");
+
+        let sides = sheets_for_plan(&plan, A6, A4_LANDSCAPE, Some(A5_LANDSCAPE)).unwrap();
+        let cover: Vec<&SheetSide> = sides.iter().filter(|s| s.stock == "cover").collect();
+        let text: Vec<&SheetSide> = sides.iter().filter(|s| s.stock == "text").collect();
+        assert_eq!(cover.len(), 2, "one cover sheet, printed both sides");
+        assert_eq!(text.len(), 8, "four text sheets, printed both sides");
+
+        // The cover is A5, the text A4 — different paper, different size.
+        assert!((cover[0].width - mm_to_points(210.0)).abs() < 0.5);
+        assert!((cover[0].height - mm_to_points(148.0)).abs() < 0.5);
+        assert!((text[0].width - mm_to_points(297.0)).abs() < 0.5);
+
+        // The cover carries the outer four pages and nothing else.
+        let pages = |s: &SheetSide| s.placements.iter().map(|p| p.page).collect::<Vec<_>>();
+        assert_eq!(pages(cover[0]), vec![Some(20), Some(1)], "outside: back cover | front cover");
+        assert_eq!(pages(cover[1]), vec![Some(2), Some(19)], "inside front | inside back");
+    }
+
+    /// The text block must start after the cover, not repeat its pages.
+    #[test]
+    fn the_text_block_starts_where_the_cover_left_off() {
+        let plan =
+            booklet_plan(BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, Some(200.0))
+                .unwrap();
+        let sides = sheets_for_plan(&plan, A6, A4_LANDSCAPE, Some(A5_LANDSCAPE)).unwrap();
+
+        let mut all: Vec<u32> = sides
+            .iter()
+            .flat_map(|s| s.placements.iter().filter_map(|p| p.page))
+            .collect();
+        all.sort_unstable();
+        assert_eq!(all, (1..=20).collect::<Vec<_>>(), "every page once, none twice");
+
+        let text: Vec<&SheetSide> = sides.iter().filter(|s| s.stock == "text").collect();
+        let pages = |s: &SheetSide| s.placements.iter().map(|p| p.page).collect::<Vec<_>>();
+        // Pages 3..18 nested inside the cover: the outermost text sheet takes
+        // the first and last of that range.
+        assert_eq!(pages(text[0]), vec![Some(18), Some(3)]);
+        assert_eq!(pages(text[1]), vec![Some(4), Some(17)]);
+        assert_eq!(pages(text[6]), vec![Some(12), Some(9)]);
+        assert_eq!(pages(text[7]), vec![Some(10), Some(11)]);
+    }
+
+    /// Without a separate cover the booklet is unchanged — the outermost
+    /// sheet simply carries the cover pages on the same stock.
+    #[test]
+    fn a_self_cover_booklet_is_left_alone() {
+        let plan =
+            booklet_plan(BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, None)
+                .unwrap();
+        assert!(!plan.separate_cover);
+        assert_eq!(plan.sheet_count, 5);
+        let sides = sheets_for_plan(&plan, A6, A4_LANDSCAPE, None).unwrap();
+        assert!(sides.iter().all(|s| s.stock == "text"));
+        let pages = |s: &SheetSide| s.placements.iter().map(|p| p.page).collect::<Vec<_>>();
+        assert_eq!(pages(&sides[0]), vec![Some(20), Some(1)]);
+    }
+
+    /// A cover sheet too small to fold in two says so, naming the sizes.
+    #[test]
+    fn a_cover_sheet_that_cannot_fold_is_refused_clearly() {
+        let plan =
+            booklet_plan(BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, Some(200.0))
+                .unwrap();
+        // An A6 cover sheet holds one A6 page a side, so it cannot wrap.
+        let err = sheets_for_plan(&plan, A6, A4_LANDSCAPE, Some(A6)).unwrap_err();
+        assert!(err.contains("cover sheet cannot be imposed"), "{err}");
     }
 
     /// The grid comes from the paper, so the same request imposes correctly
@@ -290,8 +436,8 @@ mod tests {
     #[test]
     fn four_up_folded_work_is_imposed_from_the_fold() {
         // 16 A6 pages, 4 a side on portrait A4: two sheets, folded twice.
-        let plan = booklet_plan(BindingType::SaddleStitch, 16, 4, DuplexMode::LongEdge, false, 80.0).unwrap();
-        let sides = sheets_for_plan(&plan, A6, A4).unwrap();
+        let plan = booklet_plan(BindingType::SaddleStitch, 16, 4, DuplexMode::LongEdge, false, 80.0, None).unwrap();
+        let sides = sheets_for_plan(&plan, A6, A4, None).unwrap();
         assert_eq!(sides.len(), 4, "two sheets, both sides");
 
         let pages = |s: &SheetSide| s.placements.iter().map(|p| p.page).collect::<Vec<_>>();
@@ -308,8 +454,8 @@ mod tests {
     /// imposition has to say so or the printed pages come out inverted.
     #[test]
     fn the_inverted_row_of_a_quarto_is_marked() {
-        let plan = booklet_plan(BindingType::SaddleStitch, 16, 4, DuplexMode::LongEdge, false, 80.0).unwrap();
-        let sides = sheets_for_plan(&plan, A6, A4).unwrap();
+        let plan = booklet_plan(BindingType::SaddleStitch, 16, 4, DuplexMode::LongEdge, false, 80.0, None).unwrap();
+        let sides = sheets_for_plan(&plan, A6, A4, None).unwrap();
         for side in &sides {
             let rotations: Vec<i64> = side.placements.iter().map(|p| p.rotation).collect();
             assert_eq!(rotations, vec![180, 180, 0, 0], "{} {}", side.sheet_number, side.side);
@@ -319,8 +465,8 @@ mod tests {
     /// The same document on bigger paper: A5 pages, 4 a side on A3.
     #[test]
     fn the_algorithm_follows_the_chosen_paper_sizes() {
-        let plan = booklet_plan(BindingType::SaddleStitch, 16, 4, DuplexMode::LongEdge, false, 80.0).unwrap();
-        let sides = sheets_for_plan(&plan, A5, A3).unwrap();
+        let plan = booklet_plan(BindingType::SaddleStitch, 16, 4, DuplexMode::LongEdge, false, 80.0, None).unwrap();
+        let sides = sheets_for_plan(&plan, A5, A3, None).unwrap();
         assert_eq!(sides.len(), 4);
         let pages = |s: &SheetSide| s.placements.iter().map(|p| p.page).collect::<Vec<_>>();
         // Same numbering as on A4 with A6 pages — only the paper changed.
@@ -336,8 +482,8 @@ mod tests {
     #[test]
     fn a_part_filled_signature_leaves_blanks_at_the_back() {
         // 12 pages at 8 a sheet needs 2 sheets = 16 slots, so 4 blanks.
-        let plan = booklet_plan(BindingType::SaddleStitch, 12, 4, DuplexMode::LongEdge, false, 80.0).unwrap();
-        let sides = sheets_for_plan(&plan, A6, A4).unwrap();
+        let plan = booklet_plan(BindingType::SaddleStitch, 12, 4, DuplexMode::LongEdge, false, 80.0, None).unwrap();
+        let sides = sheets_for_plan(&plan, A6, A4, None).unwrap();
         let placed: Vec<u32> = sides
             .iter()
             .flat_map(|s| s.placements.iter().filter_map(|p| p.page))
@@ -354,24 +500,24 @@ mod tests {
     /// instead of imposing something that will not print.
     #[test]
     fn a_grid_that_does_not_fit_the_sheet_is_refused_with_the_numbers() {
-        let plan = booklet_plan(BindingType::SaddleStitch, 32, 8, DuplexMode::LongEdge, false, 80.0).unwrap();
-        let err = sheets_for_plan(&plan, A6, A4).unwrap_err();
+        let plan = booklet_plan(BindingType::SaddleStitch, 32, 8, DuplexMode::LongEdge, false, 80.0, None).unwrap();
+        let err = sheets_for_plan(&plan, A6, A4, None).unwrap_err();
         assert!(err.contains("does not fit"), "{err}");
         assert!(err.contains("4 pages"), "{err}");
     }
 
     #[test]
     fn pages_that_do_not_fit_the_sheet_are_rejected() {
-        let plan = booklet_plan(BindingType::Perfect, 4, 1, DuplexMode::LongEdge, false, 80.0).unwrap();
+        let plan = booklet_plan(BindingType::Perfect, 4, 1, DuplexMode::LongEdge, false, 80.0, None).unwrap();
         // A4 pages cannot fit on an A5 sheet at 100%.
-        assert!(sheets_for_plan(&plan, A4, (148.0, 210.0)).is_err());
+        assert!(sheets_for_plan(&plan, A4, (148.0, 210.0), None).is_err());
     }
 
     #[test]
     fn unsupported_grid_is_rejected() {
-        let mut plan = booklet_plan(BindingType::Spiral, 8, 1, DuplexMode::Simplex, false, 80.0).unwrap();
+        let mut plan = booklet_plan(BindingType::Spiral, 8, 1, DuplexMode::Simplex, false, 80.0, None).unwrap();
         plan.pages_per_side = 5;
-        assert!(sheets_for_plan(&plan, A5, A4).is_err());
+        assert!(sheets_for_plan(&plan, A5, A4, None).is_err());
     }
 }
 
@@ -414,6 +560,7 @@ pub fn sheets_for_signature(
             let rotation = if side_name == "back" { back_rotation } else { 0 };
             let offset_x = (sheet_w - 2.0 * cell_w) / 2.0;
             out.push(SheetSide {
+                stock: "text".to_string(),
                 sheet_number: s.sheet_number,
                 side: side_name.to_string(),
                 width: sheet_w,
@@ -466,6 +613,7 @@ pub fn sheets_for_step_and_repeat(
         out.push(SheetSide {
             sheet_number: n,
             side: "front".to_string(),
+            stock: "text".to_string(),
             width: sheet_w,
             height: sheet_h,
             placements: layout.cells.iter().map(|c| Placement::from_cell(c, 0)).collect(),

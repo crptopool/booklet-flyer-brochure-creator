@@ -34,6 +34,7 @@ export interface SheetSide {
   placements: Placement[];
   fold_x: number[];
   fold_y?: number[];
+  stock: string;
 }
 
 function newCanvas(cssWidth: number, cssHeight: number): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {

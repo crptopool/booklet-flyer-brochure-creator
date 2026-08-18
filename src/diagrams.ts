@@ -513,7 +513,7 @@ export function boundSpreadDiagram(
  * 180 degree rotation applied to back sides when the flip demands it.
  */
 export function sheetSideDiagram(
-  side: { sheet_number: number; side: string; width: number; height: number; fold_x: number[]; fold_y?: number[]; placements: Array<{ page: number | null; x: number; y: number; width: number; height: number; rotation: number }> },
+  side: { sheet_number: number; side: string; stock?: string; width: number; height: number; fold_x: number[]; fold_y?: number[]; placements: Array<{ page: number | null; x: number; y: number; width: number; height: number; rotation: number }> },
   showMarks: boolean
 ): string {
   const W = 360;
@@ -585,10 +585,10 @@ export function sheetSideDiagram(
 
   const rotated = side.placements.some((p) => p.rotation !== 0);
   body +=
-    label(W / 2, 15, `Sheet ${side.sheet_number} — ${side.side}${rotated ? " (rotated 180° for the flip)" : ""}`, "middle", 11, INK) +
+    label(W / 2, 15, `${side.stock === "cover" ? "Cover sheet" : "Text sheet"} ${side.sheet_number} — ${side.side}${rotated ? " (rotated 180° for the flip)" : ""}`, "middle", 11, INK) +
     label(W / 2, oy + sh + 20, `${(side.width / 2.8346).toFixed(0)} × ${(side.height / 2.8346).toFixed(0)} mm sheet`, "middle", 9);
 
-  return svg(W, H, body, `Sheet ${side.sheet_number} ${side.side} as printed`);
+  return svg(W, H, body, `${side.stock === "cover" ? "Cover" : "Text"} sheet ${side.sheet_number} ${side.side} as printed`);
 }
 
 // ---------------------------------------------------------------------------

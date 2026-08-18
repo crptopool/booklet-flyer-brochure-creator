@@ -246,7 +246,7 @@ pub fn nested_signature_pages(
 }
 
 /// Pages past the end of the supplied document are blank positions.
-fn page_or_blank(page: u32, source_pages: u32) -> Option<u32> {
+pub fn page_or_blank(page: u32, source_pages: u32) -> Option<u32> {
     if page >= 1 && page <= source_pages {
         Some(page)
     } else {

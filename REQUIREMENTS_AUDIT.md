@@ -82,6 +82,24 @@
 > Validated against two independent references: the single-fold layout the
 > application already produced and had been checked against §11.1, and the
 > classic quarto table. Both are reproduced exactly by the simulation.
+>
+> **Update 8 — the cover can be a separate stock.** A booklet's cover is
+> often heavier or larger paper than its text — the requesting example was
+> a 200 GSM A5 cover wrapping an A6 saddle-stitch booklet whose text is
+> imposed on A4. Checking "Cover on different paper" now folds the cover as
+> its own two-page wrap, on its own chosen sheet size and weight, carrying
+> only the four outer pages; the text block is imposed separately and
+> starts numbering after them. The two are written to separate PDF files,
+> because they are separate runs through the printer on separate paper —
+> concatenating them into one file would invite printing the cover on text
+> stock or the reverse. The plan states the split in GSM and page numbers
+> before export, and the printer-spread table names which sheets are cover
+> stock and which are text.
+>
+> Verified against the requesting example end to end: the cover file comes
+> out on A5 landscape carrying `36|1` and `2|35`; the text file comes out
+> on A4 with sixteen sides carrying the nested 32-page block starting at
+> `34|3`.
 
 ---
 

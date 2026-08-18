@@ -173,6 +173,20 @@
               <option value="portrait">Portrait</option>
             </select>
           </label>
+          <label class="span-2">
+            <span class="inline-check">
+              <input type="checkbox" id="bk-cover-sep" />
+              Cover on different paper
+            </span>
+            <span class="hint" id="bk-cover-hint">A heavier or larger cover is folded as its own
+              wrap around the text block, and printed as a separate run.</span>
+          </label>
+          <label>Cover sheet size
+            <select id="bk-cover-sheet" disabled></select>
+          </label>
+          <label>Cover weight (GSM)
+            <input type="number" id="bk-cover-gsm" value="200" min="1" step="10" disabled />
+          </label>
           <label>Paper weight (GSM)
             <input type="number" id="bk-gsm" value="80" min="1" />
           </label>

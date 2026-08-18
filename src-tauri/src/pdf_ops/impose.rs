@@ -97,11 +97,20 @@ pub struct SheetSide {
     pub placements: Vec<Placement>,
     /// X positions (points) of the creases running top to bottom.
     pub fold_x: Vec<f64>,
+    /// Which paper this sheet is printed on: "text" or "cover". A cover on
+    /// different stock is a separate run through the printer, so the two
+    /// cannot simply be concatenated and sent as one job.
+    #[serde(default = "default_stock")]
+    pub stock: String,
     /// Y positions (points) of the creases running left to right. A sheet
     /// folded more than once has creases on both axes, and a crease with no
     /// mark against it is a crease the binder has to guess at.
     #[serde(default)]
     pub fold_y: Vec<f64>,
+}
+
+fn default_stock() -> String {
+    "text".to_string()
 }
 
 fn number(obj: &Object) -> Option<f64> {
@@ -533,6 +542,7 @@ mod tests {
             ],
             fold_x: vec![pw],
             fold_y: vec![],
+            stock: default_stock(),
         }
     }
 
@@ -630,7 +640,7 @@ mod tests {
     fn trim_bounds_of_an_empty_side_is_none() {
         let side = SheetSide {
             sheet_number: 1, side: "front".into(), width: 100.0, height: 100.0,
-            placements: vec![], fold_x: vec![], fold_y: vec![],
+            placements: vec![], fold_x: vec![], fold_y: vec![], stock: default_stock(),
         };
         assert!(trim_bounds(&side).is_none());
     }
