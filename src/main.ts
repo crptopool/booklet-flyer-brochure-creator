@@ -517,6 +517,7 @@ async function renderBindingMethods() {
       selectedBinding = card.dataset.binding!;
       marginOverridden = false;
       renderBindingMethods().catch(showError);
+      replanIfShowing();
     });
   });
   await applyBindingDefaults();
@@ -635,11 +636,34 @@ async function renderConfigDiagrams() {
       : "");
 }
 
+/**
+ * Rebuild a plan that is already on screen.
+ *
+ * The plan is a snapshot of the settings at the moment it was calculated.
+ * Left alone it goes stale the instant anything above it changes, and then
+ * the screen contradicts itself: the diagrams show 4 pages per side while
+ * the plan below still reports the 2-per-side sheet count. Debounced so
+ * typing in a number field does not fire a rebuild per keystroke.
+ */
+let replanTimer: number | undefined;
+function replanIfShowing() {
+  if (!currentPlan) return;
+  window.clearTimeout(replanTimer);
+  replanTimer = window.setTimeout(() => {
+    buildAndShowBookletPlan().catch(showError);
+  }, 150);
+}
+
 // Any configuration change refreshes the sample images immediately.
 for (const id of ["bk-per-side", "bk-sides", "bk-flip", "bk-orientation", "bk-side", "bk-pages"]) {
   el<HTMLElement>(id).addEventListener("change", () => {
     renderConfigDiagrams().catch(showError);
+    replanIfShowing();
   });
+}
+// These do not feed the diagrams, but they do feed the plan and the sheets.
+for (const id of ["bk-trim", "bk-sheet", "bk-gsm"]) {
+  el<HTMLElement>(id).addEventListener("change", replanIfShowing);
 }
 el<HTMLInputElement>("bk-margin").addEventListener("input", () => {
   marginOverridden = true;

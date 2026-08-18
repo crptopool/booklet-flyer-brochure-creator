@@ -119,7 +119,9 @@ pub fn booklet_plan(
                 profile.name
             ),
         ));
-    } else {
+    } else if sheet_count * pages_per_sheet == total_pages {
+        // Only claim a clean fit when the sheets also come out full — the
+        // binding rule alone does not guarantee that.
         notes.push(note(
             "INFO",
             format!("Page count suits {} with no blanks needed.", profile.name),
@@ -215,6 +217,37 @@ pub fn booklet_plan(
         ));
     }
 
+    // The binding's own rule (a multiple of 4 for saddle stitch) is not the
+    // whole story: the sheets must also come out full. 36 pages satisfies
+    // "multiple of 4" yet still leaves four empty positions at 8 pages per
+    // sheet, and saying "no blanks needed" there would be wrong.
+    let sheet_capacity = sheet_count * pages_per_sheet;
+    if sheet_capacity > total_pages {
+        let short = sheet_capacity - total_pages;
+        notes.push(note(
+            "WARNING",
+            format!(
+                "{sheet_count} sheets hold {sheet_capacity} pages, so {short} position(s) are left \
+                 empty by {total_pages} pages. Add {short} blank page(s), or change the pages per \
+                 side so the sheets come out full."
+            ),
+        ));
+    }
+
+    // Say this here rather than letting the user discover it at the save
+    // step, after they have settled on a configuration.
+    if profile.folded && !uses_printer_spreads {
+        notes.push(note(
+            "ERROR",
+            format!(
+                "This configuration cannot be exported: {} imposition is implemented for the \
+                 classic single fold only — 2 pages per side, printed double-sided. The plan above \
+                 is still correct for printing by hand.",
+                profile.name
+            ),
+        ));
+    }
+
     Ok(BookletPlan {
         profile,
         duplex,
@@ -246,6 +279,51 @@ mod tests {
 
     fn plan(binding: BindingType, pages: u32, per_side: u32, mode: DuplexMode, landscape: bool) -> BookletPlan {
         booklet_plan(binding, pages, per_side, mode, landscape, 80.0).unwrap()
+    }
+
+    /// 36 pages at 4 per side satisfies "multiple of 4" but still leaves
+    /// four empty positions across five eight-page sheets.
+    #[test]
+    fn partly_filled_sheets_are_reported_even_when_the_binding_rule_passes() {
+        let p = plan(BindingType::SaddleStitch, 36, 4, DuplexMode::LongEdge, false);
+        assert_eq!(p.sheet_count, 5);
+        assert_eq!(p.pages_per_sheet, 8);
+        assert_eq!(p.blanks_needed, 0, "the multiple-of-4 rule is satisfied");
+        let empty = p
+            .notes
+            .iter()
+            .find(|n| n.message.contains("positions are left empty") || n.message.contains("position(s) are left"))
+            .expect("the four empty positions must be reported");
+        assert_eq!(empty.severity, "WARNING");
+        assert!(empty.message.contains('4'));
+        assert!(
+            !p.notes.iter().any(|n| n.message.contains("no blanks needed")),
+            "must not claim a clean fit while four positions sit empty"
+        );
+    }
+
+    #[test]
+    fn full_sheets_still_report_a_clean_fit() {
+        let p = plan(BindingType::SaddleStitch, 32, 4, DuplexMode::LongEdge, false);
+        assert_eq!(p.sheet_count * p.pages_per_sheet, p.total_pages);
+        assert!(p.notes.iter().any(|n| n.message.contains("no blanks needed")));
+        assert!(!p.notes.iter().any(|n| n.message.contains("left empty")));
+    }
+
+    /// The export refusal must be visible in the plan, not discovered at
+    /// the save step after the user has committed to a configuration.
+    #[test]
+    fn unexportable_fold_configurations_say_so_up_front() {
+        let p = plan(BindingType::SaddleStitch, 36, 4, DuplexMode::LongEdge, false);
+        let blocked = p
+            .notes
+            .iter()
+            .find(|n| n.message.contains("cannot be exported"))
+            .expect("a 4-up fold has no imposition, so the plan must say so");
+        assert_eq!(blocked.severity, "ERROR");
+
+        let standard = plan(BindingType::SaddleStitch, 36, 2, DuplexMode::ShortEdge, true);
+        assert!(!standard.notes.iter().any(|n| n.message.contains("cannot be exported")));
     }
 
     #[test]
