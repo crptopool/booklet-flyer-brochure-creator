@@ -225,22 +225,46 @@ pub fn nested_signature_pages(
     sheet_index: u32,
     source_pages: u32,
 ) -> Result<Vec<Option<u32>>, String> {
+    let content: Vec<u32> = (1..=source_pages).collect();
+    nested_signature_pages_over(total_slots, pages_per_sheet, sheet_index, &content)
+}
+
+/// As [`nested_signature_pages`], but nesting an explicit, ordered list of
+/// real page numbers rather than the whole document.
+///
+/// This is how a document whose cover pages have been pulled out to print
+/// separately still nests correctly: `content` is the document's pages with
+/// the cover's pages already removed, in their original order, so the body
+/// folds exactly as it would if those pages had never existed.
+pub fn nested_signature_pages_over(
+    total_slots: u32,
+    pages_per_sheet: u32,
+    sheet_index: u32,
+    content: &[u32],
+) -> Result<Vec<Option<u32>>, String> {
     if pages_per_sheet == 0 || pages_per_sheet % 2 != 0 {
         return Err("a folded sheet carries an even number of pages".into());
     }
     if sheet_index == 0 {
         return Err("sheets are numbered from 1".into());
     }
+    let nth = |position_1based: u32| -> Option<u32> {
+        if position_1based >= 1 && (position_1based as usize) <= content.len() {
+            Some(content[position_1based as usize - 1])
+        } else {
+            None
+        }
+    };
     let half = pages_per_sheet / 2;
     let first = (sheet_index - 1) * half;
     let mut pages = Vec::with_capacity(pages_per_sheet as usize);
-    // Front block: the k-th run of pages from the start of the document.
+    // Front block: the k-th run of pages from the start of the content.
     for i in 0..half {
-        pages.push(page_or_blank(first + i + 1, source_pages));
+        pages.push(nth(first + i + 1));
     }
     // Back block: the matching run counted from the end.
     for i in 0..half {
-        pages.push(page_or_blank(total_slots - first - half + i + 1, source_pages));
+        pages.push(nth(total_slots - first - half + i + 1));
     }
     Ok(pages)
 }
@@ -502,6 +526,23 @@ mod tests {
         let inner = nested_signature_pages(8, 4, 2, 8).unwrap();
         assert_eq!(outer, vec![Some(1), Some(2), Some(7), Some(8)]);
         assert_eq!(inner, vec![Some(3), Some(4), Some(5), Some(6)]);
+    }
+
+    /// Removing the cover pages from the content list must nest the
+    /// remaining body pages as if they had never existed — not shift
+    /// numbers around, and not leave gaps.
+    #[test]
+    fn nesting_over_an_explicit_list_skips_excluded_pages_cleanly() {
+        // A 10-page document with pages 1, 2, 9, 10 pulled out for a
+        // separate cover leaves 6 body pages: 3..=8.
+        let content: Vec<u32> = (3..=8).collect();
+        let outer = nested_signature_pages_over(8, 4, 1, &content).unwrap();
+        let inner = nested_signature_pages_over(8, 4, 2, &content).unwrap();
+        // Body-relative positions 1,2,7,8 -> content[0],content[1],blank,blank
+        // (the content list only has 6 entries, so positions 7 and 8 are
+        // padding, not the excluded pages reappearing).
+        assert_eq!(outer, vec![Some(3), Some(4), None, None]);
+        assert_eq!(inner, vec![Some(5), Some(6), Some(7), Some(8)]);
     }
 
     #[test]

@@ -169,7 +169,8 @@ export async function paintSheet(side: SheetSide, showMarks: boolean, maxWidth =
   }
 
   const rotated = side.placements.some((p) => p.rotation !== 0);
-  label(ctx, `Sheet ${side.sheet_number} — ${side.side}${rotated ? " (rotated 180° for the flip)" : ""}`, (sw + pad * 2) / 2, 16, 11, INK);
+  const stock = side.stock === "cover" ? "Cover sheet" : "Text sheet";
+  label(ctx, `${stock} ${side.sheet_number} — ${side.side}${rotated ? " (rotated 180° for the flip)" : ""}`, (sw + pad * 2) / 2, 16, 11, INK);
   label(ctx, `${(side.width / 2.8346).toFixed(0)} × ${(side.height / 2.8346).toFixed(0)} mm sheet${isLoaded() ? "" : " · import a PDF to see real artwork"}`, (sw + pad * 2) / 2, oy + sh + 20, 9);
   return canvas;
 }

@@ -286,6 +286,26 @@ main > .panel > h2 {
   font-weight: 600;
 }
 
+/* The four page-number fields for a cover already present in the document. */
+.cover-page-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 160px));
+  gap: 0.7rem;
+  margin: -0.2rem 0 0.4rem;
+  padding: 0.7rem 0.8rem;
+  background: #f6f7fc;
+  border: 1px solid #e2e4ee;
+  border-radius: 8px;
+}
+
+.cover-page-picker label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+  color: #445;
+}
+
 .doc-sync {
   margin: 0.35rem 0 0;
   font-size: 0.82rem;

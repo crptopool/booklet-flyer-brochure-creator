@@ -22,7 +22,7 @@ fn sixteen_a6_pages_impose_four_up_on_a4() {
     let out = std::env::temp_dir().join("printprep-quarto.pdf");
 
     let plan =
-        booklet_plan(BindingType::SaddleStitch, 16, 4, DuplexMode::LongEdge, false, 80.0, None).unwrap();
+        booklet_plan(BindingType::SaddleStitch, 16, 4, DuplexMode::LongEdge, false, 80.0, None, None).unwrap();
     let sides = sheets_for_plan(&plan, A6, A4, None).unwrap();
     assert_eq!(sides.len(), 4, "two sheets, printed both sides");
 

@@ -100,6 +100,26 @@
 > out on A5 landscape carrying `36|1` and `2|35`; the text file comes out
 > on A4 with sixteen sides carrying the nested 32-page block starting at
 > `34|3`.
+>
+> **Update 9 — the cover asks one question: included or excluded.** The
+> first cut of the separate cover took the outer four pages of the document
+> for the wrap, which is wrong for the common case — a plus cover is blank
+> card the user prints artwork on, and silently moving four pages onto it
+> shortens the booklet. The cover is now blank by default, and a single
+> checkbox asks whether the cover pages are already in the imported file.
+> When they are, the user names the four (outside front, inside front,
+> inside back, outside back, prefilled with 1, 2, N-1, N) and exactly those
+> are pulled out of the body and printed on the cover sheet instead. The
+> body then folds as if those pages had never been in the document, so
+> excluding pages from the middle leaves no gap and shifts nothing —
+> `nested_signature_pages_over` nests an explicit ordered page list rather
+> than assuming a contiguous 1..N. The binding's multiple-of-four rule and
+> any padding blanks are checked against the body, not the raw file length.
+>
+> Verified end to end on a 36-page file: the plan reports 9 sheets
+> (1 cover + 8 text) with the cover carrying 1, 2, 35, 36; the exported
+> cover file holds `36|1` and `2|35`, and the text file holds exactly
+> pages 3–34 with no gaps or repeats.
 
 ---
 

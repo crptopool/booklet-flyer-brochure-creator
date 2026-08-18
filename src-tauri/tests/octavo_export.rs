@@ -18,7 +18,7 @@ fn thirty_two_a6_pages_impose_eight_up_on_a3() {
     let out = std::env::temp_dir().join("printprep-octavo.pdf");
 
     let plan =
-        booklet_plan(BindingType::SaddleStitch, 32, 8, DuplexMode::LongEdge, false, 80.0, None).unwrap();
+        booklet_plan(BindingType::SaddleStitch, 32, 8, DuplexMode::LongEdge, false, 80.0, None, None).unwrap();
     let sides = sheets_for_plan(&plan, A6, A3, None).unwrap();
     assert_eq!(sides.len(), 4, "two sheets of sixteen pages, both sides");
 

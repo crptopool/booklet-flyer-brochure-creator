@@ -218,6 +218,9 @@ fn build_booklet_plan(
     sheet_is_landscape: bool,
     gsm: f64,
     cover_gsm: Option<f64>,
+    // The document's own pages to print on the cover, when it is not
+    // blank: outside front, inside front, inside back, outside back.
+    cover_source_pages: Option<Vec<u32>>,
 ) -> Result<BookletPlan, String> {
     print_calc::plan::booklet_plan(
         binding,
@@ -227,6 +230,7 @@ fn build_booklet_plan(
         sheet_is_landscape,
         gsm,
         cover_gsm,
+        cover_source_pages,
     )
 }
 

@@ -49,6 +49,10 @@ pub struct BookletPlan {
     pub separate_cover: bool,
     /// Pages carried by the cover wrap — 4, or 0 when there is no separate cover.
     pub cover_pages: u32,
+    /// The document's own pages placed on the cover, in wrap order
+    /// (outside front, inside front, inside back, outside back) — empty
+    /// when the cover is blank and carries none of the manuscript.
+    pub cover_source_pages: Vec<u32>,
     /// Pages in the text block, which is everything the cover does not carry.
     pub text_pages: u32,
     /// Sheets of text stock.
@@ -78,6 +82,12 @@ pub fn booklet_plan(
     sheet_is_landscape: bool,
     gsm: f64,
     cover_gsm: Option<f64>,
+    // The document's own pages to print on the cover, in wrap order
+    // (outside front, inside front, inside back, outside back). `None` or
+    // empty means the cover is blank and every source page stays in the
+    // text block; when given, must be exactly four distinct page numbers
+    // within `1..=source_pages`.
+    cover_source_pages: Option<Vec<u32>>,
 ) -> Result<BookletPlan, String> {
     if source_pages == 0 {
         return Err("page count must be positive".into());
@@ -85,23 +95,58 @@ pub fn booklet_plan(
     if pages_per_side == 0 {
         return Err("pages per side must be positive".into());
     }
+    let cover_source_pages = cover_source_pages.unwrap_or_default();
+    if !cover_source_pages.is_empty() {
+        if cover_source_pages.len() != 4 {
+            return Err(format!(
+                "a cover wrap has four positions (outside front, inside front, inside back, \
+                 outside back) — {} page(s) were given",
+                cover_source_pages.len()
+            ));
+        }
+        let mut seen = std::collections::HashSet::new();
+        for &p in &cover_source_pages {
+            if p == 0 || p > source_pages {
+                return Err(format!(
+                    "cover page {p} is outside the document's {source_pages} pages"
+                ));
+            }
+            if !seen.insert(p) {
+                return Err(format!("page {p} cannot be on the cover twice"));
+            }
+        }
+    }
 
     let profile = binding_profile(binding);
     let duplex = duplex_plan(duplex_mode, sheet_is_landscape);
     let is_duplex = duplex_mode != DuplexMode::Simplex;
 
-    let blanks = blanks_for_binding(binding, source_pages)?;
-    let total_pages = source_pages + blanks;
+    // A separate cover is a wrap of its own: one folded sheet, on its own
+    // stock, bound around the text block. By default it carries none of the
+    // manuscript's pages — a plus cover is normally blank card stock, or
+    // carries separate artwork laid out on the Cover Creator screen — but
+    // the user may instead designate four of the document's own pages to
+    // print there, which pulls exactly those pages out of the text block.
+    // Only folded work wraps this way — a glued or punched cover is a
+    // different job, and the Cover Creator handles it.
+    let separate_cover = cover_gsm.is_some() && profile.folded;
+    // Only take pages out of the body when there is actually somewhere for
+    // them to go; an exclusion list supplied without a separate cover is
+    // simply not acted on.
+    let cover_source_pages = if separate_cover { cover_source_pages } else { Vec::new() };
+
+    // Pages the cover has taken out of the manuscript are not part of the
+    // body being folded, so the binding's page-count rule (and any padding
+    // blanks) apply to what is left, not to the document as a whole.
+    let body_pages = source_pages - cover_source_pages.len() as u32;
+    let blanks = blanks_for_binding(binding, body_pages)?;
+    let total_pages = body_pages + blanks;
 
     let pages_per_sheet = pages_per_side * if is_duplex { 2 } else { 1 };
 
-    // A separate cover is a wrap of its own: one folded sheet carrying the
-    // outer four pages, with the text block bound inside it. Only folded
-    // work wraps this way — a glued or punched cover is a different job,
-    // and the Cover Creator handles it.
-    let separate_cover = cover_gsm.is_some() && profile.folded && total_pages >= 8;
+    // Blank (or designated) positions the wrap has, not extra pages of text.
     let cover_pages = if separate_cover { 4 } else { 0 };
-    let text_pages = total_pages - cover_pages;
+    let text_pages = total_pages;
     let text_sheet_count = text_pages.div_ceil(pages_per_sheet);
     let cover_sheet_count = u32::from(separate_cover);
     let sheet_count = text_sheet_count + cover_sheet_count;
@@ -260,15 +305,33 @@ pub fn booklet_plan(
 
     if separate_cover {
         let cover = cover_gsm.unwrap_or(gsm);
-        notes.push(note(
-            "INFO",
-            format!(
-                "The cover is a separate wrap: one sheet at {cover:.0} GSM carrying pages 1, 2, \
-                 {} and {total_pages}, with {text_pages} pages of text at {gsm:.0} GSM bound \
-                 inside it. The two go through the printer as separate runs.",
-                total_pages - 1
-            ),
-        ));
+        if cover_source_pages.is_empty() {
+            notes.push(note(
+                "INFO",
+                format!(
+                    "The cover is a separate wrap: one blank sheet at {cover:.0} GSM, printed \
+                     separately from the {text_pages} pages of text at {gsm:.0} GSM. It does not \
+                     use any of the manuscript's pages — add cover artwork separately, for \
+                     example on the Cover Creator screen, and print it on the cover stock."
+                ),
+            ));
+        } else {
+            notes.push(note(
+                "INFO",
+                format!(
+                    "The cover is a separate wrap: one sheet at {cover:.0} GSM carrying pages \
+                     {}, printed separately from the {text_pages} remaining pages of text at \
+                     {gsm:.0} GSM. Those {} pages are removed from the text block, not \
+                     duplicated in it.",
+                    cover_source_pages
+                        .iter()
+                        .map(u32::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    cover_source_pages.len()
+                ),
+            ));
+        }
         if cover <= gsm {
             notes.push(note(
                 "INFO",
@@ -278,13 +341,6 @@ pub fn booklet_plan(
                 ),
             ));
         }
-    } else if cover_gsm.is_some() && profile.folded && total_pages < 8 {
-        notes.push(note(
-            "WARNING",
-            "A separate cover wrap needs at least 8 pages: 4 for the cover and 4 for the text \
-             block. This job is being planned with the cover on the same stock."
-                .to_string(),
-        ));
     } else if cover_gsm.is_some() && !profile.folded {
         notes.push(note(
             "INFO",
@@ -322,6 +378,7 @@ pub fn booklet_plan(
         uses_printer_spreads,
         separate_cover,
         cover_pages,
+        cover_source_pages,
         text_pages,
         text_sheet_count,
         cover_sheet_count,
@@ -333,8 +390,13 @@ pub fn booklet_plan(
 }
 
 /// Printer-spread order when the plan uses the classic saddle-stitch fold.
+///
+/// Empty when the cover has pulled pages out of the manuscript: this table
+/// numbers a plain 1..N document, and a document with pages missing from
+/// the middle of that range needs the exclusion-aware imposition instead,
+/// which is what the "Printed sheets" simulation and the export both use.
 pub fn plan_spreads(plan: &BookletPlan) -> Result<Vec<crate::print_calc::booklet::SheetSpread>, String> {
-    if !plan.uses_printer_spreads {
+    if !plan.uses_printer_spreads || !plan.cover_source_pages.is_empty() {
         return Ok(vec![]);
     }
     saddle_stitch_order(plan.source_pages)
@@ -345,7 +407,97 @@ mod tests {
     use super::*;
 
     fn plan(binding: BindingType, pages: u32, per_side: u32, mode: DuplexMode, landscape: bool) -> BookletPlan {
-        booklet_plan(binding, pages, per_side, mode, landscape, 80.0, None).unwrap()
+        booklet_plan(binding, pages, per_side, mode, landscape, 80.0, None, None).unwrap()
+    }
+
+    /// Designating cover pages pulls exactly those out of the body, and the
+    /// binding's page-count rule then applies to what's left, not the raw
+    /// document length.
+    #[test]
+    fn designated_cover_pages_are_removed_from_the_body() {
+        let p = booklet_plan(
+            BindingType::SaddleStitch,
+            24,
+            2,
+            DuplexMode::ShortEdge,
+            true,
+            80.0,
+            Some(200.0),
+            Some(vec![1, 2, 23, 24]),
+        )
+        .unwrap();
+        assert_eq!(p.cover_source_pages, vec![1, 2, 23, 24]);
+        assert_eq!(p.text_pages, 20, "24 supplied minus 4 on the cover");
+        assert_eq!(p.blanks_needed, 0);
+        assert!(p.notes.iter().any(|n| n.message.contains("carrying pages 1, 2, 23, 24")));
+    }
+
+    /// A page count that only becomes a multiple of four after the cover's
+    /// pages are removed must not be flagged as needing blanks — the rule
+    /// applies to the body, not to the document as a whole.
+    #[test]
+    fn the_blank_rule_is_checked_against_the_body_not_the_document() {
+        // 22 pages total; removing 4 for the cover leaves 18, which is not
+        // a multiple of 4 either — so 2 blanks are expected, not a blanks
+        // count computed against 22.
+        let p = booklet_plan(
+            BindingType::SaddleStitch,
+            22,
+            2,
+            DuplexMode::ShortEdge,
+            true,
+            80.0,
+            Some(200.0),
+            Some(vec![1, 2, 21, 22]),
+        )
+        .unwrap();
+        assert_eq!(p.text_pages, 20, "18 body pages padded to the next multiple of 4");
+        assert_eq!(p.blanks_needed, 2);
+    }
+
+    /// Four page numbers are required — not two, not zero-through-error —
+    /// because the wrap always has four physical positions.
+    #[test]
+    fn cover_pages_must_be_exactly_four() {
+        let err = booklet_plan(
+            BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, Some(200.0),
+            Some(vec![1, 20]),
+        )
+        .unwrap_err();
+        assert!(err.contains("four positions"), "{err}");
+    }
+
+    /// A page outside the document, or repeated, is refused before any
+    /// sheet is built — not discovered later as a missing or doubled page.
+    #[test]
+    fn cover_pages_must_be_real_and_distinct() {
+        let out_of_range = booklet_plan(
+            BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, Some(200.0),
+            Some(vec![1, 2, 19, 21]),
+        )
+        .unwrap_err();
+        assert!(out_of_range.contains("outside the document"), "{out_of_range}");
+
+        let repeated = booklet_plan(
+            BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, Some(200.0),
+            Some(vec![1, 1, 19, 20]),
+        )
+        .unwrap_err();
+        assert!(repeated.contains("cannot be on the cover twice"), "{repeated}");
+    }
+
+    /// Designating cover pages without an actual separate cover (no GSM
+    /// given) is quietly ignored rather than mysteriously shrinking the body.
+    #[test]
+    fn cover_pages_are_ignored_without_a_separate_cover() {
+        let p = booklet_plan(
+            BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, None,
+            Some(vec![1, 2, 19, 20]),
+        )
+        .unwrap();
+        assert!(!p.separate_cover);
+        assert!(p.cover_source_pages.is_empty());
+        assert_eq!(p.text_pages, 20);
     }
 
     /// 36 pages at 4 per side satisfies "multiple of 4" but still leaves
@@ -489,7 +641,7 @@ mod tests {
 
     #[test]
     fn invalid_inputs_error() {
-        assert!(booklet_plan(BindingType::Perfect, 0, 2, DuplexMode::LongEdge, false, 80.0, None).is_err());
-        assert!(booklet_plan(BindingType::Perfect, 10, 0, DuplexMode::LongEdge, false, 80.0, None).is_err());
+        assert!(booklet_plan(BindingType::Perfect, 0, 2, DuplexMode::LongEdge, false, 80.0, None, None).is_err());
+        assert!(booklet_plan(BindingType::Perfect, 10, 0, DuplexMode::LongEdge, false, 80.0, None, None).is_err());
     }
 }

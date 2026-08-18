@@ -187,6 +187,30 @@
           <label>Cover weight (GSM)
             <input type="number" id="bk-cover-gsm" value="200" min="1" step="10" disabled />
           </label>
+          <label class="span-2">
+            <span class="inline-check">
+              <input type="checkbox" id="bk-cover-included" disabled />
+              Cover pages are already in this document
+            </span>
+            <span class="hint">Leave unchecked for a blank cover you'll design separately. Check
+              this only if pages inside the file you imported are meant to be the cover art —
+              they'll be pulled out of the booklet body and printed on the cover sheet instead.</span>
+          </label>
+          <div class="span-2 cover-page-picker hidden" id="bk-cover-picker">
+            <label>Outside front
+              <input type="number" id="bk-cover-p1" min="1" />
+            </label>
+            <label>Inside front
+              <input type="number" id="bk-cover-p2" min="1" />
+            </label>
+            <label>Inside back
+              <input type="number" id="bk-cover-p3" min="1" />
+            </label>
+            <label>Outside back
+              <input type="number" id="bk-cover-p4" min="1" />
+            </label>
+          </div>
+          <p id="bk-cover-picker-note" class="doc-sync hidden span-2"></p>
           <label>Paper weight (GSM)
             <input type="number" id="bk-gsm" value="80" min="1" />
           </label>
