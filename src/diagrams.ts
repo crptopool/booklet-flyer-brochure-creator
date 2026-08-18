@@ -670,7 +670,172 @@ export function resultDiagram(key: string, sheets: number, totalPages: number): 
 }
 
 // ---------------------------------------------------------------------------
-// 6. Cover layout — panels, folds and guides drawn to scale
+// 6. Finishing — where to cut and where to staple
+// ---------------------------------------------------------------------------
+
+const CUT = "#c2410c";
+
+/**
+ * Scissors glyph, pointing along `rotate` degrees (0 = blades up).
+ *
+ * Drawn rather than shipped as an icon font so it inherits the diagram's
+ * colours and stays crisp at any size under the strict CSP.
+ */
+function scissors(x: number, y: number, rotate: number, color = CUT): string {
+  return `<g transform="translate(${x} ${y}) rotate(${rotate})" fill="none" stroke="${color}"
+      stroke-width="1.5" stroke-linecap="round">
+      <circle cx="-4.2" cy="6.4" r="2.9"/>
+      <circle cx="4.2" cy="6.4" r="2.9"/>
+      <line x1="-3.2" y1="4" x2="5" y2="-8.5"/>
+      <line x1="3.2" y1="4" x2="-5" y2="-8.5"/>
+      <circle cx="0" cy="0.6" r="0.9" fill="${color}" stroke="none"/>
+    </g>`;
+}
+
+/**
+ * Staple glyph straddling a spine that runs vertically through `x`.
+ *
+ * The crown lies along the spine and the legs turn into the pages, which is
+ * how a saddle staple actually sits — a plain bracket shape beside the fold
+ * reads as an arrow or a page edge instead.
+ */
+function staple(x: number, y: number, legDir: number): string {
+  const leg = 8 * legDir;
+  const h = 7;
+  const path = `M ${x} ${y - h} L ${x + leg} ${y - h} M ${x} ${y - h} L ${x} ${y + h}
+    M ${x} ${y + h} L ${x + leg} ${y + h}`;
+  // A white casing first: the staple sits on the drawn spine, and without
+  // it the pin is lost against that line.
+  return (
+    `<path d="${path}" fill="none" stroke="${PAPER}" stroke-width="5.5"
+      stroke-linecap="round" stroke-linejoin="round"/>` +
+    `<path d="${path}" fill="none" stroke="#4a5570" stroke-width="2.6"
+      stroke-linecap="round" stroke-linejoin="round"/>`
+  );
+}
+
+/** A dashed trim line with its own scissors, so each cut is unambiguous. */
+function cutLine(
+  x1: number, y1: number, x2: number, y2: number,
+  sx: number, sy: number, rotate: number, text: string, tx: number, ty: number, anchor: string
+): string {
+  return (
+    `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${CUT}" stroke-width="1.3"
+      stroke-dasharray="6 4"/>` +
+    scissors(sx, sy, rotate) +
+    label(tx, ty, text, anchor, 9, CUT)
+  );
+}
+
+/**
+ * Where the guillotine goes and where the staples go, for the finished job.
+ *
+ * `folds` matters: a single fold leaves the head and foot as cut edges of
+ * the paper already, but a second fold closes the head, and that fold must
+ * be cut off or the booklet will not open.
+ */
+export function finishingDiagram(key: string, folds: number, bindingSide: string): string {
+  const W = 330;
+  const H = 232;
+  const bw = 84;
+  const bh = 108;
+  const by = 54;
+  const spineLeft = bindingSide !== "right";
+  const outward = spineLeft ? 1 : -1;
+
+  const folded = key === "saddle_stitch";
+  const punched = key === "spiral" || key === "wire_o";
+  const headMustGo = folded && folds >= 2;
+  const cutsHeadAndFoot = headMustGo || !folded;
+
+  // Head and foot are captioned in a right-hand column; without them the
+  // drawing has the full width and should sit in the middle of it.
+  const bx = cutsHeadAndFoot ? 62 : (W - bw) / 2;
+  const spineX = spineLeft ? bx : bx + bw;
+  const foreX = spineLeft ? bx + bw : bx;
+
+  let body = `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="2"
+    fill="${PAPER}" stroke="${MUTED}" stroke-width="1.4"/>`;
+  // A few page edges, so the stack reads as a booklet rather than one sheet.
+  for (let i = 1; i <= 3; i++) {
+    const ex = foreX - outward * i * 2.2;
+    body += `<line x1="${ex}" y1="${by + i * 2}" x2="${ex}" y2="${by + bh - i * 2}"
+      stroke="${PAGE_EDGE}" stroke-width="0.9"/>`;
+  }
+
+  // --- The spine, captioned above so the text never runs off the drawing --
+  const capX = spineX + outward * 6;
+  if (folded) {
+    body += `<line x1="${spineX}" y1="${by}" x2="${spineX}" y2="${by + bh}"
+      stroke="${ACCENT}" stroke-width="2.4"/>`;
+    for (const sy of [by + bh * 0.3, by + bh * 0.7]) {
+      body += staple(spineX, sy, outward);
+    }
+    body +=
+      label(capX, 30, "STAPLE HERE", "middle", 9.5, INK) +
+      label(capX, 42, "through the fold — never cut", "middle", 8.5);
+  } else if (punched) {
+    for (let i = 0; i < 7; i++) {
+      const hy = by + 9 + i * ((bh - 18) / 6);
+      body += `<circle cx="${spineX + outward * 7}" cy="${hy}" r="2.1"
+        fill="none" stroke="${METAL}" stroke-width="1.3"/>`;
+    }
+    body +=
+      label(capX, 30, "PUNCH HERE", "middle", 9.5, INK) +
+      label(capX, 42, "after trimming — no staples", "middle", 8.5);
+  } else {
+    body += `<rect x="${spineLeft ? bx : bx + bw - 7}" y="${by}" width="7" height="${bh}"
+      fill="${key === "hardcover" ? BOARD : GLUE}" opacity="0.75"/>`;
+    body +=
+      label(capX, 30, "GLUED SPINE", "middle", 9.5, INK) +
+      label(capX, 42, "no staples — never cut", "middle", 8.5);
+  }
+
+  // --- The cuts ----------------------------------------------------------
+  // The fore-edge cut is labelled underneath; head and foot are labelled in
+  // the right-hand column, so no two captions can overlap.
+  const foreCutX = foreX - outward * 7;
+  body += cutLine(
+    foreCutX, by - 10, foreCutX, by + bh + 10,
+    foreCutX, by + bh + 26, 180,
+    "fore-edge — cut vertically", foreCutX, by + bh + 46, "middle"
+  );
+
+  if (cutsHeadAndFoot) {
+    const colX = bx + bw + 34;
+    for (const [y, text] of [
+      [by + 7, headMustGo ? "head — FOLDED, must cut" : "head — cut horizontally"],
+      [by + bh - 7, "foot — cut horizontally"],
+    ] as Array<[number, string]>) {
+      body += cutLine(
+        bx - 10, y, bx + bw + 10, y,
+        colX - 12, y, 270,
+        text, colX, y + 3.5, "start"
+      );
+    }
+  }
+
+  const heading = folded
+    ? headMustGo
+      ? "Staple the spine, then cut three edges"
+      : "Staple the spine, then cut one edge"
+    : punched
+      ? "Trim to size first, then punch the spine edge"
+      : "Trim three edges; the spine is glued, not cut";
+  body += label(W / 2, 15, heading, "middle", 11, INK);
+
+  const footer = folded
+    ? headMustGo
+      ? "The second fold closes the head — leave it and the pages stay joined"
+      : "Head and foot are already cut edges of the sheet"
+    : "Cut through the whole stack in one pass so every page matches";
+  body += label(W / 2, H - 8, footer, "middle", 9.5);
+
+  return svg(W, H, body, "Where to cut and where to staple the finished document");
+}
+
+// ---------------------------------------------------------------------------
+// 7. Cover layout — panels, folds and guides drawn to scale
 // ---------------------------------------------------------------------------
 
 interface RectMm { x: number; y: number; width: number; height: number }

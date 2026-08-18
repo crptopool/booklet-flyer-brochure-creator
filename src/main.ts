@@ -11,6 +11,7 @@ import {
   pagesPerSheetDiagram,
   coverDiagram,
   ebookDiagram,
+  finishingDiagram,
   resultDiagram,
   sheetSideDiagram,
 } from "./diagrams";
@@ -627,6 +628,17 @@ async function renderConfigDiagrams() {
       "After printing and binding",
       resultDiagram(p.key, sheets, pages),
       `${sheets} sheet${sheets === 1 ? "" : "s"} of paper produce the finished ${p.name.toLowerCase()} document.`
+    ) +
+    card(
+      "Cutting and stapling",
+      finishingDiagram(p.key, folds, side),
+      p.folded
+        ? folds >= 2
+          ? "Staples go through the spine fold. The head is closed by the second fold and has to be cut off, along with the fore-edge and foot."
+          : "Staples go through the spine fold. Only the fore-edge is trimmed — the head and foot are already cut edges of the sheet."
+        : p.punched
+          ? "Trim the stack to its final size before punching, or the holes will sit at different distances from the edge."
+          : "The spine is glued and never cut. Trim the other three edges through the whole stack in one pass."
     ) +
     (flip.manual_steps.length
       ? `<div class="diagram manual-steps">
