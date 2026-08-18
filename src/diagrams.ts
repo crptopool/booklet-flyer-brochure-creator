@@ -513,7 +513,7 @@ export function boundSpreadDiagram(
  * 180 degree rotation applied to back sides when the flip demands it.
  */
 export function sheetSideDiagram(
-  side: { sheet_number: number; side: string; width: number; height: number; fold_x: number[]; placements: Array<{ page: number | null; x: number; y: number; width: number; height: number; rotation: number }> },
+  side: { sheet_number: number; side: string; width: number; height: number; fold_x: number[]; fold_y?: number[]; placements: Array<{ page: number | null; x: number; y: number; width: number; height: number; rotation: number }> },
   showMarks: boolean
 ): string {
   const W = 360;
@@ -559,6 +559,13 @@ export function sheetSideDiagram(
     body += `<line x1="${x}" y1="${oy - 6}" x2="${x}" y2="${oy + sh + 6}"
       stroke="${WARN}" stroke-width="1.3" stroke-dasharray="5 4"/>`;
     body += label(x, oy - 10, "fold", "middle", 9, WARN);
+  }
+  for (const fy of side.fold_y ?? []) {
+    // PDF space measures up from the bottom of the sheet.
+    const y = oy + sh - fy * s;
+    body += `<line x1="${ox - 6}" y1="${y}" x2="${ox + sw + 6}" y2="${y}"
+      stroke="${WARN}" stroke-width="1.3" stroke-dasharray="5 4"/>`;
+    body += label(ox - 10, y - 3, "fold", "end", 9, WARN);
   }
 
   if (showMarks) {

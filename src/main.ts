@@ -125,6 +125,7 @@ interface SheetSide {
   height: number;
   placements: SheetPlacement[];
   fold_x: number[];
+  fold_y?: number[];
 }
 
 interface BookletPlan {
@@ -548,6 +549,7 @@ async function applyBindingDefaults() {
   const perSide = el<HTMLSelectElement>("bk-per-side");
   if (p.folded && perSide.value === "1") perSide.value = "2";
   if (!p.folded && perSide.value !== "1") perSide.value = "1";
+  await refreshSheetCapacity();
 
   const ruleText =
     p.page_count_rule === "multiple_of_four"
@@ -573,6 +575,77 @@ async function applyBindingDefaults() {
   await renderConfigDiagrams();
 }
 
+interface SheetCapacity {
+  fit_rows: number;
+  fit_cols: number;
+  options: number[];
+  rows: number | null;
+  cols: number | null;
+  turned: boolean;
+  folds: string[];
+}
+
+/** What the currently chosen papers can hold, or null while they cannot. */
+let capacity: SheetCapacity | null = null;
+
+/**
+ * Offer only the pages-per-side counts the chosen paper can actually hold.
+ *
+ * The imposition is generated from the sheet and trim sizes, so the menu has
+ * to come from the same place — otherwise the user can pick 8 pages a side on
+ * A4 and only find out it was impossible at the export step.
+ */
+async function refreshSheetCapacity() {
+  const perSide = el<HTMLSelectElement>("bk-per-side");
+  const wanted = Number(perSide.value) || 1;
+  const note = el<HTMLParagraphElement>("bk-capacity");
+  let sizes: { trim: [number, number]; sheet: [number, number] };
+  try {
+    sizes = await currentSizes();
+  } catch {
+    return;
+  }
+
+  try {
+    capacity = await invoke<SheetCapacity>("sheet_capacity", {
+      trimMm: sizes.trim,
+      sheetMm: sizes.sheet,
+      pagesPerSide: wanted,
+    });
+  } catch (e) {
+    capacity = null;
+    note.className = "doc-sync doc-sync-mismatch";
+    note.classList.remove("hidden");
+    note.textContent = typeof e === "string" ? e : String(e);
+    return;
+  }
+
+  const folded = currentProfile()?.folded ?? false;
+  // Unfolded work is stacked and cut, so it is not limited to powers of two.
+  const options = folded ? capacity.options : [1, 2, 4].filter((n) => n <= capacity!.fit_rows * capacity!.fit_cols);
+  const keep = options.includes(wanted) ? wanted : options[options.length - 1] ?? 1;
+  perSide.innerHTML = options
+    .map((n) => `<option value="${n}"${n === keep ? " selected" : ""}>${n} page${n > 1 ? "s" : ""} per side</option>`)
+    .join("");
+  perSide.value = String(keep);
+
+  const { fit_rows: fr, fit_cols: fc } = capacity;
+  note.className = "doc-sync";
+  note.classList.remove("hidden");
+  const grid =
+    capacity.rows && capacity.cols
+      ? ` · imposed ${capacity.rows} × ${capacity.cols}${capacity.turned ? ", pages turned 90° to fit" : ""}`
+      : "";
+  const folds = capacity.folds.length
+    ? ` · fold ${capacity.folds.join(", then ")} (the last fold makes the spine)`
+    : " · no folds";
+  // The upright fit is the headline number, but a turned grid can hold more.
+  const most = capacity.options[capacity.options.length - 1] ?? fr * fc;
+  const upright = `${fr} × ${fc} = ${fr * fc} page${fr * fc === 1 ? "" : "s"} a side upright`;
+  const extra = most > fr * fc ? `, up to ${most} with the pages turned` : "";
+  note.textContent = `This sheet holds ${upright}${extra}${grid}` + (folded ? folds : "");
+}
+
 /** Live sample images for the current configuration. */
 async function renderConfigDiagrams() {
   const p = currentProfile();
@@ -595,7 +668,9 @@ async function renderConfigDiagrams() {
     /* diagrams still render with the defaults above */
   }
 
-  const folds = p.folded && isDuplex() ? (perSide === 4 ? 2 : perSide === 2 ? 1 : 0) : 0;
+  // The fold count comes from the layout engine, not a guess here, so the
+  // diagram cannot disagree with the imposition.
+  const folds = p.folded && isDuplex() ? (capacity?.folds.length ?? 0) : 0;
   const perSheet = perSide * (isDuplex() ? 2 : 1);
   const sheets = Math.ceil(pages / Math.max(1, perSheet));
 
@@ -676,6 +751,15 @@ for (const id of ["bk-per-side", "bk-sides", "bk-flip", "bk-orientation", "bk-si
 // These do not feed the diagrams, but they do feed the plan and the sheets.
 for (const id of ["bk-trim", "bk-sheet", "bk-gsm"]) {
   el<HTMLElement>(id).addEventListener("change", replanIfShowing);
+}
+// The paper decides what the sheet can hold, and the chosen count decides
+// how it is folded, so all four rebuild the note and the diagrams.
+for (const id of ["bk-trim", "bk-sheet", "bk-orientation", "bk-per-side"]) {
+  el<HTMLElement>(id).addEventListener("change", () => {
+    refreshSheetCapacity()
+      .then(() => renderConfigDiagrams())
+      .catch(showError);
+  });
 }
 el<HTMLInputElement>("bk-margin").addEventListener("input", () => {
   marginOverridden = true;

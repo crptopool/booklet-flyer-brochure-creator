@@ -95,8 +95,13 @@ pub struct SheetSide {
     pub width: f64,
     pub height: f64,
     pub placements: Vec<Placement>,
-    /// X positions (points) where the sheet is folded.
+    /// X positions (points) of the creases running top to bottom.
     pub fold_x: Vec<f64>,
+    /// Y positions (points) of the creases running left to right. A sheet
+    /// folded more than once has creases on both axes, and a crease with no
+    /// mark against it is a crease the binder has to guess at.
+    #[serde(default)]
+    pub fold_y: Vec<f64>,
 }
 
 fn number(obj: &Object) -> Option<f64> {
@@ -256,14 +261,20 @@ fn mark_operations(side: &SheetSide, marks: MarkOptions) -> Vec<Op> {
     }
 
     if marks.fold_marks {
+        ops.push(Op::new("d", vec![Object::Array(vec![3.into(), 3.into()]), 0.into()]));
         for &fx in &side.fold_x {
-            ops.push(Op::new("d", vec![Object::Array(vec![3.into(), 3.into()]), 0.into()]));
             ops.push(Op::new("m", vec![num(fx), num(0.0)]));
             ops.push(Op::new("l", vec![num(fx), num(10.0)]));
             ops.push(Op::new("m", vec![num(fx), num(side.height - 10.0)]));
             ops.push(Op::new("l", vec![num(fx), num(side.height)]));
-            ops.push(Op::new("d", vec![Object::Array(vec![]), 0.into()]));
         }
+        for &fy in &side.fold_y {
+            ops.push(Op::new("m", vec![num(0.0), num(fy)]));
+            ops.push(Op::new("l", vec![num(10.0), num(fy)]));
+            ops.push(Op::new("m", vec![num(side.width - 10.0), num(fy)]));
+            ops.push(Op::new("l", vec![num(side.width), num(fy)]));
+        }
+        ops.push(Op::new("d", vec![Object::Array(vec![]), 0.into()]));
     }
 
     ops.push(Op::new("S", vec![]));
@@ -521,6 +532,7 @@ mod tests {
                 Placement { page: right, x: pw, y: 0.0, width: pw, height: ph, rotation: rot },
             ],
             fold_x: vec![pw],
+            fold_y: vec![],
         }
     }
 
@@ -618,7 +630,7 @@ mod tests {
     fn trim_bounds_of_an_empty_side_is_none() {
         let side = SheetSide {
             sheet_number: 1, side: "front".into(), width: 100.0, height: 100.0,
-            placements: vec![], fold_x: vec![],
+            placements: vec![], fold_x: vec![], fold_y: vec![],
         };
         assert!(trim_bounds(&side).is_none());
     }

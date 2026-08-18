@@ -33,6 +33,7 @@ export interface SheetSide {
   height: number;
   placements: Placement[];
   fold_x: number[];
+  fold_y?: number[];
 }
 
 function newCanvas(cssWidth: number, cssHeight: number): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
@@ -121,18 +122,28 @@ export async function paintSheet(side: SheetSide, showMarks: boolean, maxWidth =
     label(ctx, String(p.page), px + 14, py + 14, 10, "#ffffff");
   }
 
-  for (const fx of side.fold_x) {
-    const x = ox + fx * scale;
+  const crease = (from: [number, number], to: [number, number], at: [number, number]) => {
     ctx.save();
     ctx.setLineDash([5, 4]);
     ctx.strokeStyle = WARN;
     ctx.lineWidth = 1.2;
     ctx.beginPath();
-    ctx.moveTo(x, oy - 6);
-    ctx.lineTo(x, oy + sh + 6);
+    ctx.moveTo(from[0], from[1]);
+    ctx.lineTo(to[0], to[1]);
     ctx.stroke();
     ctx.restore();
-    label(ctx, "fold", x, oy - 9, 9, WARN);
+    label(ctx, "fold", at[0], at[1], 9, WARN);
+  };
+
+  for (const fx of side.fold_x) {
+    const x = ox + fx * scale;
+    crease([x, oy - 6], [x, oy + sh + 6], [x, oy - 9]);
+  }
+  // A sheet folded more than once creases both ways.
+  for (const fy of side.fold_y ?? []) {
+    // PDF space measures up from the bottom; the canvas measures down.
+    const y = oy + sh - fy * scale;
+    crease([ox - 6, y], [ox + sw + 6, y], [ox - 14, y - 3]);
   }
 
   if (showMarks) {

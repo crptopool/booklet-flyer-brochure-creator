@@ -234,15 +234,14 @@ pub fn booklet_plan(
         ));
     }
 
-    // Say this here rather than letting the user discover it at the save
-    // step, after they have settled on a configuration.
-    if profile.folded && !uses_printer_spreads {
+    // A folded sheet has to carry pages on both sides; say so here rather
+    // than letting the user find out at the save step.
+    if profile.folded && !is_duplex {
         notes.push(note(
             "ERROR",
             format!(
-                "This configuration cannot be exported: {} imposition is implemented for the \
-                 classic single fold only — 2 pages per side, printed double-sided. The plan above \
-                 is still correct for printing by hand.",
+                "{} cannot be imposed single-sided: the back of every fold carries pages too. \
+                 Choose double-sided printing.",
                 profile.name
             ),
         ));
@@ -310,20 +309,22 @@ mod tests {
         assert!(!p.notes.iter().any(|n| n.message.contains("left empty")));
     }
 
-    /// The export refusal must be visible in the plan, not discovered at
-    /// the save step after the user has committed to a configuration.
+    /// Folded work needs both sides of the sheet, and the plan has to say so
+    /// before the user commits to a configuration.
     #[test]
-    fn unexportable_fold_configurations_say_so_up_front() {
-        let p = plan(BindingType::SaddleStitch, 36, 4, DuplexMode::LongEdge, false);
+    fn folded_work_printed_on_one_side_is_refused_up_front() {
+        let p = plan(BindingType::SaddleStitch, 36, 4, DuplexMode::Simplex, false);
         let blocked = p
             .notes
             .iter()
-            .find(|n| n.message.contains("cannot be exported"))
-            .expect("a 4-up fold has no imposition, so the plan must say so");
+            .find(|n| n.message.contains("cannot be imposed single-sided"))
+            .expect("a folded sheet carries pages on its reverse");
         assert_eq!(blocked.severity, "ERROR");
 
-        let standard = plan(BindingType::SaddleStitch, 36, 2, DuplexMode::ShortEdge, true);
-        assert!(!standard.notes.iter().any(|n| n.message.contains("cannot be exported")));
+        // Four pages a side, double-sided, is now imposed like any other
+        // fold count, so nothing is refused.
+        let fine = plan(BindingType::SaddleStitch, 36, 4, DuplexMode::LongEdge, false);
+        assert!(!fine.notes.iter().any(|n| n.severity == "ERROR"));
     }
 
     #[test]

@@ -10,6 +10,7 @@ pub mod cover;
 pub mod creep;
 pub mod dpi;
 pub mod duplex;
+pub mod fold;
 pub mod geometry;
 pub mod imposition;
 pub mod plan;

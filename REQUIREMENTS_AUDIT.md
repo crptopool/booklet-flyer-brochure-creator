@@ -64,6 +64,24 @@
 > which count it is planning. A count the user typed themselves is kept, and
 > the disagreement is shown with a one-click way back to the document's own
 > figure.
+>
+> **Update 7 — the imposition is generated, not tabulated.** The page order
+> on a folded sheet used to be a hand-written table covering one case: two
+> pages a side, folded once. Everything else was refused. It is now derived
+> by folding the sheet in software — the simulation reverses the pile and
+> turns the paper over at each crease, then reads the leaf order off the
+> result — so the numbering follows whatever the chosen papers allow. The
+> grid comes from the sizes rather than a lookup: A4 landscape with A5 gives
+> 1 × 2, A4 portrait with A6 gives 2 × 2, A3 with A6 gives 2 × 4, and where
+> the A-series alternates orientation the pages are turned 90° to fit, which
+> is how eight A6 pages get onto A3 and two A4 pages onto A3. The
+> pages-per-side menu is built from the same function, so a configuration
+> the paper cannot take is no longer offerable. Sheets folded more than once
+> now carry creases on both axes and mark them.
+>
+> Validated against two independent references: the single-fold layout the
+> application already produced and had been checked against §11.1, and the
+> classic quarto table. Both are reproduced exactly by the simulation.
 
 ---
 

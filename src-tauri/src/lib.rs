@@ -160,6 +160,55 @@ fn get_duplex_plan(mode: DuplexMode, sheet_is_landscape: bool) -> DuplexPlan {
     print_calc::duplex::duplex_plan(mode, sheet_is_landscape)
 }
 
+/// What the chosen papers can hold, and how the sheet folds to hold it.
+///
+/// The booklet screen offers only the counts this answers with, so the
+/// configuration cannot ask for an imposition the paper will not take.
+#[derive(serde::Serialize)]
+struct SheetCapacity {
+    /// Pages of the chosen trim size that fit upright on one side.
+    fit_rows: u32,
+    fit_cols: u32,
+    /// Pages-per-side values that can be folded and still fit.
+    options: Vec<u32>,
+    /// Grid used for the requested count, when it is one of the options.
+    rows: Option<u32>,
+    cols: Option<u32>,
+    /// True when the pages have to be turned 90° on the sheet to fit.
+    turned: bool,
+    /// Creases in the order they are made, last one being the spine.
+    folds: Vec<String>,
+}
+
+#[tauri::command]
+fn sheet_capacity(
+    trim_mm: (f64, f64),
+    sheet_mm: (f64, f64),
+    pages_per_side: u32,
+) -> Result<SheetCapacity, String> {
+    use print_calc::fold::{fit_grid, foldable_options, fold_sequence, folded_grid, FoldAxis};
+    let (fit_rows, fit_cols) = fit_grid(sheet_mm, trim_mm)?;
+    let grid = folded_grid(pages_per_side, sheet_mm, trim_mm).ok();
+    let folds = grid
+        .and_then(|g| fold_sequence(g.rows, g.cols, g.spine).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|axis| match axis {
+            FoldAxis::Vertical => "vertical".to_string(),
+            FoldAxis::Horizontal => "horizontal".to_string(),
+        })
+        .collect();
+    Ok(SheetCapacity {
+        fit_rows,
+        fit_cols,
+        options: foldable_options(sheet_mm, trim_mm),
+        rows: grid.map(|g| g.rows),
+        cols: grid.map(|g| g.cols),
+        turned: grid.is_some_and(|g| g.turned),
+        folds,
+    })
+}
+
 #[tauri::command]
 fn build_booklet_plan(
     binding: BindingType,
@@ -618,6 +667,7 @@ pub fn run() {
             get_binding_profile,
             get_duplex_plan,
             build_booklet_plan,
+            sheet_capacity,
             booklet_plan_spreads,
             plan_sheets,
             export_imposed_pdf,
