@@ -616,6 +616,21 @@ select {
   line-height: 1.45;
 }
 
+/* The printer-dialog checklist — numbered because order matters. */
+.print-steps {
+  margin: 0.6rem 0 0;
+  padding-left: 1.4rem;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.print-steps strong {
+  color: #2c5fc4;
+  font-weight: 600;
+}
+
 /* Simulation view switch */
 .seg {
   display: inline-flex;

@@ -12,6 +12,7 @@ pub mod dpi;
 pub mod duplex;
 pub mod fold;
 pub mod geometry;
+pub mod guidance;
 pub mod imposition;
 pub mod plan;
 pub mod presets;

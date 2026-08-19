@@ -1023,6 +1023,8 @@ async function refreshSimulation(plan: BookletPlan) {
   }
   readingOrder = await invoke<(number | null)[]>("bound_reading_order", { plan });
 
+  await refreshPrintGuide(plan);
+
   // Tell the user which document the export will actually be built from.
   const hint = el<HTMLParagraphElement>("export-source-hint");
   hint.innerHTML = source
@@ -1169,6 +1171,39 @@ el<HTMLButtonElement>("sim-next").addEventListener("click", () => {
 });
 el<HTMLInputElement>("sim-marks").addEventListener("change", renderSimulation);
 
+interface PrintStep {
+  title: string;
+  detail: string;
+}
+
+/**
+ * The printer-dialog checklist for the current plan.
+ *
+ * Built by the backend from the same plan as the export, so the flip edge,
+ * page ranges and stock advice always describe the file that will actually
+ * be written — the guidance can never drift from the file.
+ */
+async function refreshPrintGuide(plan: BookletPlan) {
+  const guide = el<HTMLDivElement>("print-guide");
+  try {
+    const steps = await invoke<PrintStep[]>("printing_guidance", {
+      plan,
+      sheetName: el<HTMLSelectElement>("bk-sheet").value,
+      sheetIsLandscape: isLandscape(),
+    });
+    guide.classList.remove("hidden");
+    guide.innerHTML = `
+      <h3 style="margin-top:0">How to print the exported file</h3>
+      <p class="hint">Set the print dialog up exactly like this — the file is already arranged,
+        so the dialog is the only place left for a booklet to go wrong.</p>
+      <ol class="print-steps">${steps
+        .map((s) => `<li><strong>${escapeHtml(s.title)}</strong> — ${escapeHtml(s.detail)}</li>`)
+        .join("")}</ol>`;
+  } catch {
+    guide.classList.add("hidden");
+  }
+}
+
 /** Export the imposed PDF; optionally hand it to the OS for printing. */
 async function exportImposed(openAfter: boolean) {
   if (!currentPlan) {
@@ -1219,15 +1254,23 @@ async function exportImposed(openAfter: boolean) {
     <p class="sev-info">✓ Wrote <strong>${count}</strong> sheet side${count === 1 ? "" : "s"} to
       <code>${escapeHtml(out)}</code>, arranged for ${escapeHtml(currentPlan.profile.name.toLowerCase())}.</p>
     ${coverAdvice}
-    <p class="hint">The original file was not modified. Print this file at
-      <strong>100% / actual size</strong> with scaling turned off, and set your printer to
-      <strong>${escapeHtml(currentPlan.duplex.flip_axis)}</strong>${currentPlan.pages_per_sheet > currentPlan.pages_per_side ? " for double-sided output" : " (single-sided)"}.</p>`;
+    <p class="hint">The original file was not modified. Follow the
+      <strong>How to print the exported file</strong> checklist above — in short: 100% scale,
+      ${currentPlan.pages_per_sheet > currentPlan.pages_per_side ? `two-sided with <strong>${escapeHtml(currentPlan.duplex.flip_axis)}</strong>` : "single-sided"},
+      on ${escapeHtml(el<HTMLSelectElement>("bk-sheet").value)} paper.</p>`;
 
   if (openAfter) {
+    // Hand the file to the OS print path; if that fails, at least open it.
     try {
-      await openPath(out);
+      const outcome = await invoke<string>("send_to_printer", { path: out });
+      box.innerHTML += `<p class="sev-info">✓ ${escapeHtml(outcome)}</p>`;
     } catch {
-      box.innerHTML += `<p class="hint">Could not open the file automatically — open it from ${escapeHtml(out)}.</p>`;
+      try {
+        await openPath(out);
+        box.innerHTML += `<p class="hint">The file is open in your PDF viewer — print it from there using the checklist.</p>`;
+      } catch {
+        box.innerHTML += `<p class="hint">Could not open the file automatically — open it from ${escapeHtml(out)}.</p>`;
+      }
     }
   }
 }

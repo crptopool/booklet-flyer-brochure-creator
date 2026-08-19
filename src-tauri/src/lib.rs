@@ -312,6 +312,68 @@ fn export_imposed_pdf(
     pdf_ops::impose::export_imposed(&source_path, &sides, &output_path, marks)
 }
 
+/// The printer-dialog checklist for a plan's exported file.
+///
+/// Built from the same plan as the export, so the flip edge, the page
+/// ranges and the stock advice always describe the file that was written
+/// rather than a generic leaflet.
+#[tauri::command]
+fn printing_guidance(
+    plan: BookletPlan,
+    sheet_name: String,
+    sheet_is_landscape: bool,
+) -> Vec<print_calc::guidance::PrintStep> {
+    print_calc::guidance::printing_guidance(&plan, &sheet_name, sheet_is_landscape)
+}
+
+/// Hand an exported file to the operating system's print path.
+///
+/// There is no portable way to open a native print dialog directly from a
+/// webview, so this does the honest next-best thing on each platform and
+/// reports exactly what happened, so the frontend can tell the user what
+/// to press next.
+#[tauri::command]
+fn send_to_printer(path: String) -> Result<String, String> {
+    if !std::path::Path::new(&path).exists() {
+        return Err(format!("{path} does not exist — export the file first."));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // The Print verb hands the file to the default PDF app's print
+        // command, which opens its dialog with the file already loaded.
+        std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                &format!("Start-Process -FilePath '{}' -Verb Print", path.replace('\'', "''")),
+            ])
+            .spawn()
+            .map_err(|e| format!("Could not start the system print handler: {e}"))?;
+        Ok("The file was handed to your PDF app's Print command — its print dialog opens with the file loaded. Check every setting against the checklist.".to_string())
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Could not open the file: {e}"))?;
+        Ok("The file is open in your PDF viewer — press ⌘P and set the dialog up from the checklist.".to_string())
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Could not open the file: {e}"))?;
+        Ok("The file is open in your PDF viewer — press Ctrl+P and set the dialog up from the checklist.".to_string())
+    }
+}
+
 /// Reading order of the finished, bound document.
 ///
 /// Returns the source page for each position in the bound book, so the
@@ -708,6 +770,8 @@ pub fn run() {
             booklet_plan_spreads,
             plan_sheets,
             export_imposed_pdf,
+            printing_guidance,
+            send_to_printer,
             bound_reading_order,
             cover_defaults,
             build_cover_layout,
