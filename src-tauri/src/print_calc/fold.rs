@@ -225,22 +225,23 @@ pub fn nested_signature_pages(
     sheet_index: u32,
     source_pages: u32,
 ) -> Result<Vec<Option<u32>>, String> {
-    let content: Vec<u32> = (1..=source_pages).collect();
+    let content: Vec<Option<u32>> = (1..=source_pages).map(Some).collect();
     nested_signature_pages_over(total_slots, pages_per_sheet, sheet_index, &content)
 }
 
 /// As [`nested_signature_pages`], but nesting an explicit, ordered list of
-/// real page numbers rather than the whole document.
+/// reading positions rather than the whole document.
 ///
-/// This is how a document whose cover pages have been pulled out to print
-/// separately still nests correctly: `content` is the document's pages with
-/// the cover's pages already removed, in their original order, so the body
-/// folds exactly as it would if those pages had never existed.
+/// Each entry is what that reading position shows: a real page, or `None`
+/// for a deliberate blank. This is how a document whose cover pages have
+/// been pulled out still nests correctly, and how a page can be forced onto
+/// a right-hand side: the list simply carries a blank where one is needed,
+/// and the fold puts everything where the list says.
 pub fn nested_signature_pages_over(
     total_slots: u32,
     pages_per_sheet: u32,
     sheet_index: u32,
-    content: &[u32],
+    content: &[Option<u32>],
 ) -> Result<Vec<Option<u32>>, String> {
     if pages_per_sheet == 0 || pages_per_sheet % 2 != 0 {
         return Err("a folded sheet carries an even number of pages".into());
@@ -249,8 +250,8 @@ pub fn nested_signature_pages_over(
         return Err("sheets are numbered from 1".into());
     }
     let nth = |position_1based: u32| -> Option<u32> {
-        if position_1based >= 1 && (position_1based as usize) <= content.len() {
-            Some(content[position_1based as usize - 1])
+        if position_1based >= 1 {
+            content.get(position_1based as usize - 1).copied().flatten()
         } else {
             None
         }
@@ -535,7 +536,7 @@ mod tests {
     fn nesting_over_an_explicit_list_skips_excluded_pages_cleanly() {
         // A 10-page document with pages 1, 2, 9, 10 pulled out for a
         // separate cover leaves 6 body pages: 3..=8.
-        let content: Vec<u32> = (3..=8).collect();
+        let content: Vec<Option<u32>> = (3..=8).map(Some).collect();
         let outer = nested_signature_pages_over(8, 4, 1, &content).unwrap();
         let inner = nested_signature_pages_over(8, 4, 2, &content).unwrap();
         // Body-relative positions 1,2,7,8 -> content[0],content[1],blank,blank

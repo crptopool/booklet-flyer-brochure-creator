@@ -28,6 +28,7 @@ fn a_covered_booklet_exports_as_one_file_with_the_cover_first() {
         true,
         Some(200.0),
         Some(vec![1, 36]),
+        None,
     )
     .unwrap();
     assert_eq!(plan.text_pages, 36, "34 body pages padded to a multiple of 4");
@@ -79,11 +80,13 @@ fn the_same_stock_cover_has_identical_geometry() {
     let with_note = booklet_plan(
         BindingType::SaddleStitch, 36, 4, DuplexMode::LongEdge, false, 80.0, true, Some(200.0),
         Some(vec![1, 36]),
+        None,
     )
     .unwrap();
     let same_stock = booklet_plan(
         BindingType::SaddleStitch, 36, 4, DuplexMode::LongEdge, false, 80.0, true, None,
         Some(vec![1, 36]),
+        None,
     )
     .unwrap();
 

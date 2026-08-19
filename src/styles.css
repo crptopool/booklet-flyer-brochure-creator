@@ -616,6 +616,48 @@ select {
   line-height: 1.45;
 }
 
+/* Chapter-start picker: one chip per page, thumbnails when a PDF is loaded. */
+.recto-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 230px;
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid #ccd5ee;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.page-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  min-width: 36px;
+  border: 1px solid #ccd5ee;
+  border-radius: 6px;
+  background: #f7f8fd;
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: #445;
+}
+
+.page-chip canvas {
+  border: 1px solid #e2e7f5;
+  background: #fff;
+  pointer-events: none;
+}
+
+.page-chip.selected {
+  border-color: #2c5fc4;
+  background: #e5edfc;
+  color: #2c5fc4;
+  font-weight: 600;
+  box-shadow: 0 0 0 1px #2c5fc4 inset;
+}
+
 /* The printer-dialog checklist — numbered because order matters. */
 .print-steps {
   margin: 0.6rem 0 0;
@@ -856,4 +898,8 @@ button.ghost:hover {
 #sim-stage > .zoom-layer {
   transform-origin: center center;
   transition: transform 0.06s linear;
+}
+
+.recto-picker.hidden {
+  display: none;
 }

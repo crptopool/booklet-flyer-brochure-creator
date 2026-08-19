@@ -150,7 +150,7 @@ mod tests {
     fn covered_plan() -> BookletPlan {
         booklet_plan(
             BindingType::SaddleStitch, 36, 4, DuplexMode::LongEdge, false, 80.0, true, Some(200.0),
-            Some(vec![1, 36]),
+            Some(vec![1, 36]), None,
         )
         .unwrap()
     }
@@ -174,7 +174,7 @@ mod tests {
         // preview the file and see upside-down back sides.
         let plan = booklet_plan(
             BindingType::SaddleStitch, 36, 4, DuplexMode::ShortEdge, false, 80.0, true, Some(200.0),
-            Some(vec![1, 36]),
+            Some(vec![1, 36]), None,
         )
         .unwrap();
         assert!(plan.duplex.back_side_inverted);
@@ -197,7 +197,7 @@ mod tests {
     fn same_stock_cover_is_one_job() {
         let plan = booklet_plan(
             BindingType::SaddleStitch, 36, 4, DuplexMode::LongEdge, false, 80.0, true, None,
-            Some(vec![1, 36]),
+            Some(vec![1, 36]), None,
         )
         .unwrap();
         let steps = printing_guidance(&plan, "A4", false);
@@ -208,7 +208,7 @@ mod tests {
     #[test]
     fn simplex_work_says_to_turn_duplex_off() {
         let plan = booklet_plan(
-            BindingType::Spiral, 10, 1, DuplexMode::Simplex, false, 80.0, false, None, None,
+            BindingType::Spiral, 10, 1, DuplexMode::Simplex, false, 80.0, false, None, None, None,
         )
         .unwrap();
         let steps = printing_guidance(&plan, "A4", false);
@@ -227,7 +227,7 @@ mod tests {
     #[test]
     fn a_self_cover_booklet_has_no_cover_step() {
         let plan = booklet_plan(
-            BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, false, None, None,
+            BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, false, None, None, None,
         )
         .unwrap();
         let steps = printing_guidance(&plan, "A4", true);

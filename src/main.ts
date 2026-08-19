@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openPath } from "@tauri-apps/plugin-opener";
-import { loadDocument, renderPage, unload as unloadPdf } from "./pdfRender";
+import { isLoaded as pdfIsLoaded, loadDocument, renderPage, unload as unloadPdf } from "./pdfRender";
 import { paintBoundSpread, paintSheet } from "./preview";
 import {
   bindingDiagram,
@@ -143,6 +143,8 @@ interface BookletPlan {
   separate_cover: boolean;
   cover_pages: number;
   cover_source_pages: number[];
+  recto_pages: number[];
+  chapter_blanks: number;
   text_pages: number;
   text_sheet_count: number;
   cover_sheet_count: number;
@@ -552,6 +554,88 @@ for (const id of ["bk-cover-gsm", "bk-cover-p1", "bk-cover-p2"]) {
   el<HTMLElement>(id).addEventListener("change", replanIfShowing);
 }
 
+// --- Chapter starts: pages forced onto a right-hand page --------------------
+
+/** Pages the user marked as chapter starts. */
+const rectoSelection = new Set<number>();
+let rectoChipCount = 0;
+
+/** The chapter-start pages to send with the plan, or `null` for none. */
+function rectoPages(): number[] | null {
+  if (!el<HTMLInputElement>("bk-recto").checked) return null;
+  const pages = Array.from(rectoSelection).sort((a, b) => a - b);
+  return pages.length ? pages : null;
+}
+
+/**
+ * One chip per page of the document being planned. With a document loaded
+ * each chip grows a thumbnail, so a chapter title page can be recognised
+ * by its artwork rather than remembered by number.
+ */
+function renderRectoPicker() {
+  const total = Number(el<HTMLInputElement>("bk-pages").value) || 0;
+  const box = el<HTMLDivElement>("bk-recto-picker");
+  // Selections past the end of a shrunk document mean nothing any more.
+  for (const p of Array.from(rectoSelection)) if (p > total) rectoSelection.delete(p);
+  if (total === rectoChipCount && box.childElementCount) {
+    syncRectoChips();
+    return;
+  }
+  rectoChipCount = total;
+  box.innerHTML = "";
+  for (let p = 1; p <= total; p++) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "page-chip";
+    chip.dataset.page = String(p);
+    chip.title = `Page ${p}`;
+    const num = document.createElement("span");
+    num.textContent = String(p);
+    chip.appendChild(num);
+    chip.addEventListener("click", () => {
+      if (rectoSelection.has(p)) rectoSelection.delete(p);
+      else rectoSelection.add(p);
+      syncRectoChips();
+      replanIfShowing();
+    });
+    box.appendChild(chip);
+  }
+  syncRectoChips();
+  decorateRectoChips(total).catch(() => {
+    /* thumbnails are a bonus; the numbered chips already work */
+  });
+}
+
+function syncRectoChips() {
+  const chips = el<HTMLDivElement>("bk-recto-picker").querySelectorAll<HTMLButtonElement>(".page-chip");
+  for (const chip of chips) {
+    chip.classList.toggle("selected", rectoSelection.has(Number(chip.dataset.page)));
+  }
+}
+
+/** Grow thumbnails onto the chips, when a document is loaded to draw from. */
+async function decorateRectoChips(total: number) {
+  if (!pdfIsLoaded()) return;
+  const box = el<HTMLDivElement>("bk-recto-picker");
+  for (let p = 1; p <= total; p++) {
+    const chip = box.querySelector<HTMLButtonElement>(`[data-page="${p}"]`);
+    if (!chip || chip.querySelector("canvas")) continue;
+    const thumb = await renderPage(p, 34);
+    // The picker may have been rebuilt while this page was rendering.
+    if (thumb && chip.isConnected) chip.prepend(thumb);
+  }
+}
+
+el<HTMLInputElement>("bk-recto").addEventListener("change", () => {
+  const on = el<HTMLInputElement>("bk-recto").checked;
+  el<HTMLDivElement>("bk-recto-picker").classList.toggle("hidden", !on);
+  if (on) renderRectoPicker();
+  replanIfShowing();
+});
+el<HTMLInputElement>("bk-pages").addEventListener("change", () => {
+  if (!el<HTMLDivElement>("bk-recto-picker").classList.contains("hidden")) renderRectoPicker();
+});
+
 // --- Binding method selection ---------------------------------------------
 
 let bindingProfiles: BindingProfile[] = [];
@@ -859,7 +943,8 @@ async function buildAndShowBookletPlan() {
   {
     const pages = Number(el<HTMLInputElement>("bk-pages").value);
     const cover = coverConfig();
-    const note = el<HTMLParagraphElement>("bk-cover-picker-note");
+    const coverNoteBox = el<HTMLParagraphElement>("bk-cover-picker-note");
+    const rectoNoteBox = el<HTMLParagraphElement>("bk-recto-note");
     let plan: BookletPlan;
     try {
       plan = await invoke<BookletPlan>("build_booklet_plan", {
@@ -872,16 +957,20 @@ async function buildAndShowBookletPlan() {
         withCover: cover.withCover,
         coverGsm: cover.gsm,
         coverSourcePages: coverSourcePages(),
+        rectoPages: rectoPages(),
       });
     } catch (e) {
-      // A bad cover-page selection is reported against the picker itself,
-      // where it can be corrected, rather than in a modal away from it.
-      note.className = "doc-sync doc-sync-mismatch span-2";
-      note.classList.remove("hidden");
-      note.textContent = typeof e === "string" ? e : String(e);
+      // A bad selection is reported against the picker it came from, where
+      // it can be corrected, rather than in a modal away from it.
+      const message = typeof e === "string" ? e : String(e);
+      const target = message.includes("chapter") ? rectoNoteBox : coverNoteBox;
+      target.className = "doc-sync doc-sync-mismatch span-2";
+      target.classList.remove("hidden");
+      target.textContent = message;
       return;
     }
-    note.classList.add("hidden");
+    coverNoteBox.classList.add("hidden");
+    rectoNoteBox.classList.add("hidden");
 
     const result = el<HTMLDivElement>("booklet-result");
     result.classList.remove("hidden");
@@ -890,8 +979,9 @@ async function buildAndShowBookletPlan() {
       <ul class="spec-list">
         <li><strong>Sheets of paper</strong> ${plan.sheet_count}${plan.separate_cover ? ` (${plan.cover_sheet_count} cover + ${plan.text_sheet_count} text)` : ""}</li>
         <li><strong>Pages per sheet</strong> ${plan.pages_per_sheet} (${plan.pages_per_side} per side${plan.pages_per_sheet > plan.pages_per_side ? ", both sides" : ", one side"})</li>
-        <li><strong>Total pages</strong> ${plan.total_pages}${plan.blanks_needed ? ` (${plan.source_pages - plan.cover_source_pages.length} in the body + ${plan.blanks_needed} blank${plan.cover_source_pages.length ? `; ${plan.cover_source_pages.length} more on the cover` : ""})` : ""}</li>
+        <li><strong>Total pages</strong> ${plan.total_pages}${plan.blanks_needed || plan.chapter_blanks ? ` (${plan.source_pages - plan.cover_source_pages.length} in the body${plan.chapter_blanks ? ` + ${plan.chapter_blanks} chapter blank${plan.chapter_blanks === 1 ? "" : "s"}` : ""}${plan.blanks_needed ? ` + ${plan.blanks_needed} end blank${plan.blanks_needed === 1 ? "" : "s"}` : ""}${plan.cover_source_pages.length ? `; ${plan.cover_source_pages.length} more on the cover` : ""})` : ""}</li>
         ${plan.separate_cover ? `<li><strong>Cover</strong> sheet 1, front printed only — ${plan.cover_source_pages.length ? `page ${plan.cover_source_pages[0]} (front) and page ${plan.cover_source_pages[1]} (back)` : "blank, with cut and fold marks"}${plan.cover_gsm !== null ? ` — on ${plan.cover_gsm.toFixed(0)} GSM stock` : " — same paper as the text"}</li>` : ""}
+        ${plan.recto_pages.length ? `<li><strong>Chapter starts</strong> page${plan.recto_pages.length === 1 ? "" : "s"} ${plan.recto_pages.join(", ")} open on the right — ${plan.chapter_blanks} blank${plan.chapter_blanks === 1 ? "" : "s"} inserted</li>` : ""}
         <li><strong>Folds per sheet</strong> ${plan.folds_per_sheet}</li>
         <li><strong>Duplex</strong> ${escapeHtml(plan.duplex.flip_axis)}${plan.duplex.back_side_inverted ? " — back sides rotated 180°" : ""}</li>
         ${plan.spine_width_mm !== null ? `<li><strong>Spine width</strong> ${plan.spine_width_mm.toFixed(2)} mm at ${plan.caliper_mm.toFixed(3)} mm caliper</li>` : ""}
@@ -925,11 +1015,11 @@ async function buildAndShowBookletPlan() {
       </div>`
           )
           .join("")
-      : plan.cover_source_pages.length
+      : plan.cover_source_pages.length || plan.chapter_blanks
         ? `${coverNote}<p class="hint">This quick table lists spreads for a plain 1–N document, so it
-           cannot show a booklet whose cover has taken pages out of the middle of that range. Use
-           <strong>Printed sheets</strong> in the simulation above to step through the real sheets —
-           it and the export are built from the same imposition.</p>`
+           cannot show a booklet whose cover has taken pages out of that range or whose chapter
+           starts have pulled in blanks. Use <strong>Printed sheets</strong> in the simulation above
+           to step through the real sheets — it and the export are built from the same imposition.</p>`
         : `<p class="hint">Printer spreads are shown for the classic single-fold saddle-stitch layout
            (2 pages per side, double-sided). ${escapeHtml(plan.profile.name)} with this configuration keeps
            pages in normal reading order instead.</p>`;

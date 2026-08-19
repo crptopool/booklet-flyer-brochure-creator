@@ -226,6 +226,9 @@ fn build_booklet_plan(
     // The document's own pages to print on the cover's outside, when it is
     // not blank: front cover, then back cover.
     cover_source_pages: Option<Vec<u32>>,
+    // Chapter starts: pages that must open on a right-hand page, each with
+    // a blank behind it.
+    recto_pages: Option<Vec<u32>>,
 ) -> Result<BookletPlan, String> {
     print_calc::plan::booklet_plan(
         binding,
@@ -237,6 +240,7 @@ fn build_booklet_plan(
         with_cover,
         cover_gsm,
         cover_source_pages,
+        recto_pages,
     )
 }
 
@@ -381,14 +385,10 @@ fn send_to_printer(path: String) -> Result<String, String> {
 /// blank inserted to satisfy the binding's page-count rule.
 #[tauri::command]
 fn bound_reading_order(plan: BookletPlan) -> Vec<Option<u32>> {
-    // Pages the cover took are not in the body; the reading order must skip
-    // them without leaving a hole, exactly as the imposition does.
-    let excluded: std::collections::HashSet<u32> =
-        plan.cover_source_pages.iter().copied().collect();
-    let body: Vec<Option<u32>> = (1..=plan.source_pages)
-        .filter(|p| !excluded.contains(p))
-        .map(Some)
-        .collect();
+    // The body is the plan's reading positions — cover pages absent,
+    // chapter-start blanks in place — exactly as the imposition lays them
+    // out, so the bound preview shows the same book that will be printed.
+    let body = plan.body_slots();
     let blanks = (plan.total_pages as usize).saturating_sub(body.len());
 
     let mut order = Vec::new();

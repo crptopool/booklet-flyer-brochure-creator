@@ -56,6 +56,13 @@ pub struct BookletPlan {
     /// (front cover, back cover) — empty when the cover is blank and
     /// carries none of the manuscript.
     pub cover_source_pages: Vec<u32>,
+    /// Pages the user marked as chapter starts, which must land on a
+    /// right-hand (odd) reading position with a blank behind them.
+    pub recto_pages: Vec<u32>,
+    /// Blanks inserted to put the chapter starts on the right-hand side —
+    /// separate from `blanks_needed`, which pads the end to the binding's
+    /// page-count rule.
+    pub chapter_blanks: u32,
     /// Pages in the text block, which is everything the cover does not carry.
     pub text_pages: u32,
     /// Sheets of text stock.
@@ -97,6 +104,10 @@ pub fn booklet_plan(
     // exactly two distinct page numbers within `1..=source_pages`. The
     // inside of the wrap is always blank either way.
     cover_source_pages: Option<Vec<u32>>,
+    // Chapter starts: pages that must open on a right-hand (odd) reading
+    // position, each with a blank behind it. Blanks are inserted into the
+    // body to make that happen.
+    recto_pages: Option<Vec<u32>>,
 ) -> Result<BookletPlan, String> {
     if source_pages == 0 {
         return Err("page count must be positive".into());
@@ -130,6 +141,17 @@ pub fn booklet_plan(
     let duplex = duplex_plan(duplex_mode, sheet_is_landscape);
     let is_duplex = duplex_mode != DuplexMode::Simplex;
 
+    let mut recto_pages = recto_pages.unwrap_or_default();
+    recto_pages.sort_unstable();
+    recto_pages.dedup();
+    for &p in &recto_pages {
+        if p == 0 || p > source_pages {
+            return Err(format!(
+                "chapter-start page {p} is outside the document's {source_pages} pages"
+            ));
+        }
+    }
+
     // A separate cover is a wrap of its own: one dedicated sheet — the
     // first of the job — printed on its outside only and folded around the
     // text block. The paper is a free choice: same stock as the text or a
@@ -146,12 +168,28 @@ pub fn booklet_plan(
     // simply not acted on.
     let cover_source_pages = if separate_cover { cover_source_pages } else { Vec::new() };
 
+    // A chapter start on a cover page is a contradiction — the cover is
+    // not part of the body, so there is no reading position to force.
+    if let Some(&clash) = recto_pages.iter().find(|p| cover_source_pages.contains(p)) {
+        return Err(format!(
+            "page {clash} is on the cover, so it cannot also be a chapter start in the body"
+        ));
+    }
+    // Forcing a right-hand start only means something in a bound book of
+    // facing pages; punched or single-sided work has no verso to avoid.
+    let recto_requested = !recto_pages.is_empty();
+    let recto_pages = if profile.folded { recto_pages } else { Vec::new() };
+
     // Pages the cover has taken out of the manuscript are not part of the
     // body being folded, so the binding's page-count rule (and any padding
-    // blanks) apply to what is left, not to the document as a whole.
+    // blanks) apply to what is left, not to the document as a whole. The
+    // body is laid out as reading positions first — chapter starts pull in
+    // their blanks here — and the rule then pads what that produces.
     let body_pages = source_pages - cover_source_pages.len() as u32;
-    let blanks = blanks_for_binding(binding, body_pages)?;
-    let total_pages = body_pages + blanks;
+    let slots = body_slots(source_pages, &cover_source_pages, &recto_pages);
+    let chapter_blanks = slots.len() as u32 - body_pages;
+    let blanks = blanks_for_binding(binding, slots.len() as u32)?;
+    let total_pages = slots.len() as u32 + blanks;
 
     let pages_per_sheet = pages_per_side * if is_duplex { 2 } else { 1 };
 
@@ -190,15 +228,25 @@ pub fn booklet_plan(
 
     if blanks > 0 {
         // The rule applies to the body being folded, so when the cover has
-        // taken pages the message must count what is left — telling the
-        // user that 36 is not a multiple of 4 would be nonsense.
-        let counted = if cover_source_pages.is_empty() {
-            format!("{source_pages} pages")
-        } else {
-            format!(
+        // taken pages — or chapter starts have pulled in blanks — the
+        // message must count what is actually laid out; telling the user
+        // that 36 is not a multiple of 4 would be nonsense.
+        let counted = match (cover_source_pages.is_empty(), chapter_blanks == 0) {
+            (true, true) => format!("{source_pages} pages"),
+            (false, true) => format!(
                 "{body_pages} pages (after {} moved to the cover)",
                 cover_source_pages.len()
-            )
+            ),
+            (true, false) => format!(
+                "a body of {} positions ({body_pages} pages plus {chapter_blanks} chapter blanks)",
+                slots.len()
+            ),
+            (false, false) => format!(
+                "a body of {} positions ({body_pages} pages after {} moved to the cover, \
+                 plus {chapter_blanks} chapter blanks)",
+                slots.len(),
+                cover_source_pages.len()
+            ),
         };
         notes.push(note(
             "WARNING",
@@ -325,6 +373,29 @@ pub fn booklet_plan(
         ));
     }
 
+    if !recto_pages.is_empty() {
+        notes.push(note(
+            "INFO",
+            format!(
+                "Page{} {} start{} on a right-hand page: {chapter_blanks} blank(s) are inserted \
+                 — one before any chapter that would otherwise open on the left, and one behind \
+                 each chapter page so its back stays empty.",
+                if recto_pages.len() == 1 { "" } else { "s" },
+                recto_pages.iter().map(u32::to_string).collect::<Vec<_>>().join(", "),
+                if recto_pages.len() == 1 { "s" } else { "" },
+            ),
+        ));
+    } else if recto_requested {
+        notes.push(note(
+            "INFO",
+            format!(
+                "Right-hand chapter starts apply to folded booklets; {} keeps pages in their \
+                 normal order, so the selection is not acted on.",
+                profile.name
+            ),
+        ));
+    }
+
     if separate_cover {
         if cover_source_pages.is_empty() {
             notes.push(note(
@@ -414,6 +485,8 @@ pub fn booklet_plan(
         separate_cover,
         cover_pages,
         cover_source_pages,
+        recto_pages,
+        chapter_blanks,
         text_pages,
         text_sheet_count,
         cover_sheet_count,
@@ -431,10 +504,54 @@ pub fn booklet_plan(
 /// the middle of that range needs the exclusion-aware imposition instead,
 /// which is what the "Printed sheets" simulation and the export both use.
 pub fn plan_spreads(plan: &BookletPlan) -> Result<Vec<crate::print_calc::booklet::SheetSpread>, String> {
-    if !plan.uses_printer_spreads || !plan.cover_source_pages.is_empty() {
+    if !plan.uses_printer_spreads || !plan.cover_source_pages.is_empty() || plan.chapter_blanks > 0 {
         return Ok(vec![]);
     }
     saddle_stitch_order(plan.source_pages)
+}
+
+/// The body of the book as ordered reading positions.
+///
+/// Position 1 is the body's first right-hand page; odd positions are
+/// rectos, even ones versos, and each even position is the back of the
+/// leaf before it. Cover pages are simply absent — removing one leaves no
+/// hole and shifts nothing. A chapter-start page gets a blank pushed in
+/// front of it when it would otherwise open on the left, and always gets a
+/// blank behind it so the back of the chapter page stays empty.
+///
+/// This is the one place that order is decided: the plan's counts, the
+/// imposition and the bound-book preview all read it from here, so they
+/// cannot disagree about where a blank sits.
+pub fn body_slots(
+    source_pages: u32,
+    cover_source_pages: &[u32],
+    recto_pages: &[u32],
+) -> Vec<Option<u32>> {
+    let mut slots: Vec<Option<u32>> = Vec::with_capacity(source_pages as usize);
+    for p in 1..=source_pages {
+        if cover_source_pages.contains(&p) {
+            continue;
+        }
+        if recto_pages.contains(&p) {
+            if slots.len() % 2 == 1 {
+                slots.push(None);
+            }
+            slots.push(Some(p));
+            slots.push(None);
+        } else {
+            slots.push(Some(p));
+        }
+    }
+    slots
+}
+
+impl BookletPlan {
+    /// The text block as reading positions — see [`body_slots`]. Trailing
+    /// rule-padding blanks are not included; positions past the end of the
+    /// list are blank by construction wherever the list is consumed.
+    pub fn body_slots(&self) -> Vec<Option<u32>> {
+        body_slots(self.source_pages, &self.cover_source_pages, &self.recto_pages)
+    }
 }
 
 #[cfg(test)]
@@ -442,7 +559,7 @@ mod tests {
     use super::*;
 
     fn plan(binding: BindingType, pages: u32, per_side: u32, mode: DuplexMode, landscape: bool) -> BookletPlan {
-        booklet_plan(binding, pages, per_side, mode, landscape, 80.0, false, None, None).unwrap()
+        booklet_plan(binding, pages, per_side, mode, landscape, 80.0, false, None, None, None).unwrap()
     }
 
     /// Designating cover pages pulls exactly those out of the body, and the
@@ -459,7 +576,7 @@ mod tests {
             80.0,
             true,
             Some(200.0),
-            Some(vec![1, 26]),
+            Some(vec![1, 26]), None,
         )
         .unwrap();
         assert_eq!(p.cover_source_pages, vec![1, 26]);
@@ -487,7 +604,7 @@ mod tests {
             80.0,
             true,
             Some(200.0),
-            Some(vec![1, 24]),
+            Some(vec![1, 24]), None,
         )
         .unwrap();
         assert_eq!(p.text_pages, 24, "22 body pages padded to the next multiple of 4");
@@ -500,7 +617,7 @@ mod tests {
     fn cover_pages_must_be_exactly_two() {
         let err = booklet_plan(
             BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, true, Some(200.0),
-            Some(vec![1, 2, 19, 20]),
+            Some(vec![1, 2, 19, 20]), None,
         )
         .unwrap_err();
         assert!(err.contains("two printed faces"), "{err}");
@@ -512,14 +629,14 @@ mod tests {
     fn cover_pages_must_be_real_and_distinct() {
         let out_of_range = booklet_plan(
             BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, true, Some(200.0),
-            Some(vec![1, 21]),
+            Some(vec![1, 21]), None,
         )
         .unwrap_err();
         assert!(out_of_range.contains("outside the document"), "{out_of_range}");
 
         let repeated = booklet_plan(
             BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, true, Some(200.0),
-            Some(vec![5, 5]),
+            Some(vec![5, 5]), None,
         )
         .unwrap_err();
         assert!(repeated.contains("cannot be on the cover twice"), "{repeated}");
@@ -531,7 +648,7 @@ mod tests {
     fn cover_pages_are_ignored_without_a_separate_cover() {
         let p = booklet_plan(
             BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, false, None,
-            Some(vec![1, 20]),
+            Some(vec![1, 20]), None,
         )
         .unwrap();
         assert!(!p.separate_cover);
@@ -545,7 +662,7 @@ mod tests {
     #[test]
     fn a_cover_on_the_same_stock_is_still_its_own_sheet() {
         let p = booklet_plan(
-            BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, true, None, None,
+            BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, true, None, None, None,
         )
         .unwrap();
         assert!(p.separate_cover);
@@ -560,17 +677,98 @@ mod tests {
     #[test]
     fn a_different_cover_weight_only_changes_the_stock_note() {
         let same = booklet_plan(
-            BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, true, None, None,
+            BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, true, None, None, None,
         )
         .unwrap();
         let heavier = booklet_plan(
-            BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, true, Some(200.0), None,
+            BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, true, Some(200.0), None, None,
         )
         .unwrap();
         assert_eq!(same.sheet_count, heavier.sheet_count);
         assert_eq!(same.text_sheet_count, heavier.text_sheet_count);
         assert_eq!(heavier.cover_gsm, Some(200.0));
         assert!(heavier.notes.iter().any(|n| n.message.contains("feed one sheet of 200 GSM")));
+    }
+
+    /// A chapter start that would fall on a left-hand page gets a blank
+    /// pushed in front of it, and every chapter page gets a blank behind
+    /// it so its back stays empty.
+    #[test]
+    fn chapter_starts_land_on_odd_positions_with_blank_backs() {
+        // Page 4 would naturally read at position 4 (a left-hand page).
+        let slots = body_slots(8, &[], &[4]);
+        // 1,2,3 | blank to skip position 4 | 4 on position 5 | blank back | 5..8
+        assert_eq!(
+            slots,
+            vec![
+                Some(1), Some(2), Some(3), None, Some(4), None,
+                Some(5), Some(6), Some(7), Some(8),
+            ]
+        );
+        assert_eq!(slots.iter().position(|s| *s == Some(4)).unwrap() % 2, 0, "odd 1-based position");
+    }
+
+    /// A chapter already destined for a right-hand page needs no blank in
+    /// front — only the blank behind it.
+    #[test]
+    fn a_chapter_already_on_the_right_only_gets_the_blank_back() {
+        let slots = body_slots(6, &[], &[3]);
+        assert_eq!(slots, vec![Some(1), Some(2), Some(3), None, Some(4), Some(5), Some(6)]);
+    }
+
+    /// Cover pages leave the body before positions are counted, so a
+    /// chapter's position is measured in the book the reader holds.
+    #[test]
+    fn chapter_positions_are_counted_after_the_cover_leaves() {
+        // Cover takes 1 and 8; page 4 then reads at body position 3 — a
+        // right-hand page already, so only its back-blank is added.
+        let slots = body_slots(8, &[1, 8], &[4]);
+        assert_eq!(slots, vec![Some(2), Some(3), Some(4), None, Some(5), Some(6), Some(7)]);
+    }
+
+    /// The plan counts chapter blanks apart from rule padding, and the
+    /// page-count rule applies to the laid-out body.
+    #[test]
+    fn chapter_blanks_are_counted_and_then_padded() {
+        let p = booklet_plan(
+            BindingType::SaddleStitch, 8, 2, DuplexMode::ShortEdge, true, 80.0, false, None, None,
+            Some(vec![4]),
+        )
+        .unwrap();
+        assert_eq!(p.recto_pages, vec![4]);
+        assert_eq!(p.chapter_blanks, 2);
+        // 8 pages + 2 chapter blanks = 10 positions, padded to 12.
+        assert_eq!(p.blanks_needed, 2);
+        assert_eq!(p.total_pages, 12);
+        assert_eq!(p.sheet_count, 3);
+        assert!(p.notes.iter().any(|n| n.message.contains("right-hand page")));
+    }
+
+    /// A chapter page cannot also be a cover page — there is no body
+    /// position to force for a page that is not in the body.
+    #[test]
+    fn a_chapter_start_on_the_cover_is_refused() {
+        let err = booklet_plan(
+            BindingType::SaddleStitch, 20, 2, DuplexMode::ShortEdge, true, 80.0, true, None,
+            Some(vec![1, 20]),
+            Some(vec![1]),
+        )
+        .unwrap_err();
+        assert!(err.contains("cannot also be a chapter start"), "{err}");
+    }
+
+    /// Punched and single-page work has no facing pages, so the selection
+    /// is dropped with a note rather than silently changing the layout.
+    #[test]
+    fn recto_starts_are_ignored_for_unfolded_bindings() {
+        let p = booklet_plan(
+            BindingType::Spiral, 10, 1, DuplexMode::Simplex, false, 80.0, false, None, None,
+            Some(vec![3]),
+        )
+        .unwrap();
+        assert!(p.recto_pages.is_empty());
+        assert_eq!(p.chapter_blanks, 0);
+        assert!(p.notes.iter().any(|n| n.message.contains("not acted on")));
     }
 
     /// 36 pages at 4 per side satisfies "multiple of 4" but still leaves
@@ -714,7 +912,7 @@ mod tests {
 
     #[test]
     fn invalid_inputs_error() {
-        assert!(booklet_plan(BindingType::Perfect, 0, 2, DuplexMode::LongEdge, false, 80.0, false, None, None).is_err());
-        assert!(booklet_plan(BindingType::Perfect, 10, 0, DuplexMode::LongEdge, false, 80.0, false, None, None).is_err());
+        assert!(booklet_plan(BindingType::Perfect, 0, 2, DuplexMode::LongEdge, false, 80.0, false, None, None, None).is_err());
+        assert!(booklet_plan(BindingType::Perfect, 10, 0, DuplexMode::LongEdge, false, 80.0, false, None, None, None).is_err());
     }
 }

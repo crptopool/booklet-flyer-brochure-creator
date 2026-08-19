@@ -241,7 +241,7 @@ pub fn advise(request: &str) -> Result<Advice, String> {
         recommended_mode(landscape)
     };
 
-    let plan = booklet_plan(binding, pages, pages_per_side, duplex_mode, landscape, gsm, false, None, None)?;
+    let plan = booklet_plan(binding, pages, pages_per_side, duplex_mode, landscape, gsm, false, None, None, None)?;
 
     // If the sheet was not named, a folded booklet needs paper one size
     // up from the finished page, fed landscape.
